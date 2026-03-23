@@ -10,8 +10,8 @@ export const metadata: Metadata = {
   description: 'AI가 여러분의 메모를 분석하고 체계적인 위키 문서를 자동으로 생성합니다.',
   manifest: '/manifest.json',
   icons: {
-    icon: '/icon-192x192.png',
-    apple: '/apple-touch-icon.png',
+    icon: '/icons/icon-192x192.png',
+    apple: '/icons/icon-192x192.png',
   },
 };
 
