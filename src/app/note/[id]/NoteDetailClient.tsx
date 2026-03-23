@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Note } from '@/types';
 import { formatRelativeTime } from '@/lib/utils';
 import { ArrowLeft, Edit, Trash2, Tag, Clock, FileText, Network, Image, Upload } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import dynamic from 'next/dynamic';
@@ -36,6 +37,15 @@ export function NoteDetailClient({ note, userId }: Props) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const supabase = createClient();
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const meta = session?.user?.app_metadata;
+      setIsAdmin(meta?.is_admin === true || meta?.role === 'admin');
+    });
+  }, [supabase.auth]);
 
   const handleDelete = async () => {
     if (!confirm('이 메모를 삭제하시겠습니까?')) return;
@@ -88,18 +98,22 @@ export function NoteDetailClient({ note, userId }: Props) {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1" />
-        <button
-          onClick={() => setEditing(true)}
-          className="btn-secondary"
-          disabled={note.note_type === 'image' || note.note_type === 'file'}
-        >
-          <Edit className="w-4 h-4 mr-2" />
-          편집
-        </button>
-        <button onClick={handleDelete} disabled={deleting} className="btn-danger">
-          <Trash2 className="w-4 h-4 mr-2" />
-          삭제
-        </button>
+        {isAdmin && (
+          <>
+            <button
+              onClick={() => setEditing(true)}
+              className="btn-secondary"
+              disabled={note.note_type === 'image' || note.note_type === 'file'}
+            >
+              <Edit className="w-4 h-4 mr-2" />
+              편집
+            </button>
+            <button onClick={handleDelete} disabled={deleting} className="btn-danger">
+              <Trash2 className="w-4 h-4 mr-2" />
+              삭제
+            </button>
+          </>
+        )}
       </div>
 
       {/* Note card */}

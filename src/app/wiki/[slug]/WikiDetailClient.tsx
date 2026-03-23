@@ -1,12 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { WikiPage } from '@/types';
-import { ArrowLeft, BookOpen, FileText, Network, Image, Upload, Clock, Edit, Tag } from 'lucide-react';
+import { ArrowLeft, BookOpen, FileText, Network, Image, Upload, Clock, Edit, Tag, Trash2 } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { createClient } from '@/lib/supabase/client';
+import toast from 'react-hot-toast';
 
 interface NoteLink {
   note_id: string;
@@ -31,6 +34,18 @@ const noteTypeIcons: Record<string, React.ReactNode> = {
 
 export function WikiDetailClient({ wiki }: Props) {
   const [showToc, setShowToc] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const supabase = createClient();
+  const router = useRouter();
+
+  // 관리자 권한 확인
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const meta = session?.user?.app_metadata;
+      setIsAdmin(meta?.is_admin === true || meta?.role === 'admin');
+    });
+  }, [supabase.auth]);
 
   // Extract TOC from markdown
   const headers = wiki.content.match(/^#{1,3} .+/gm) || [];
@@ -41,15 +56,37 @@ export function WikiDetailClient({ wiki }: Props) {
     return { level, text, anchor };
   });
 
+  const handleDelete = async () => {
+    if (!confirm(`"${wiki.title}" 위키를 삭제하시겠습니까?`)) return;
+    setDeleting(true);
+    const { error } = await supabase.from('wiki_pages').delete().eq('id', wiki.id);
+    if (error) { toast.error('삭제 실패'); setDeleting(false); return; }
+    toast.success('위키가 삭제되었습니다.');
+    router.push('/wiki');
+  };
+
   return (
     <div className="flex gap-6 p-6 max-w-7xl mx-auto">
       {/* Main Content */}
       <div className="flex-1 min-w-0">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center justify-between gap-3 mb-6">
           <Link href="/wiki" className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
             <ArrowLeft className="w-5 h-5" />
           </Link>
+          {/* 관리자 전용 버튼 */}
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950 transition-colors disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                삭제
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="card p-8">

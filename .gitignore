@@ -37,3 +37,7 @@ next-env.d.ts
 # Editor
 .vscode/
 .idea/
+
+# Linux core dump
+core
+core.*

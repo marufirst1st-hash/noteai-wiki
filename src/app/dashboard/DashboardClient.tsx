@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatRelativeTime, cn } from '@/lib/utils';
 import {
   Plus, FileText, Network, Image, Upload, CheckSquare, Square,
-  Trash2, GitMerge, Search, Tag, MoreVertical
+  Trash2, GitMerge, Search, Tag
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { MergeModal } from '@/components/ui/MergeModal';
@@ -32,11 +32,20 @@ export function DashboardClient({ initialNotes, userId }: Props) {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [showMergeModal, setShowMergeModal] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {
     setNotes(initialNotes);
   }, [initialNotes, setNotes]);
+
+  // 관리자 권한 확인
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const meta = session?.user?.app_metadata;
+      setIsAdmin(meta?.is_admin === true || meta?.role === 'admin');
+    });
+  }, [supabase.auth]);
 
   const filtered = notes.filter((n) => {
     const matchSearch = n.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -107,8 +116,8 @@ export function DashboardClient({ initialNotes, userId }: Props) {
         </div>
       </div>
 
-      {/* Selection Bar */}
-      {selectedNotes.length > 0 && (
+      {/* Selection Bar - 관리자만 표시 */}
+      {isAdmin && selectedNotes.length > 0 && (
         <div className="flex items-center gap-3 mb-4 p-3 bg-primary-50 dark:bg-primary-950 rounded-xl border border-primary-200 dark:border-primary-800">
           <span className="text-sm font-medium text-primary-700 dark:text-primary-300">
             {selectedNotes.length}개 선택됨
@@ -154,24 +163,28 @@ export function DashboardClient({ initialNotes, userId }: Props) {
                 )}
                 onClick={() => router.push(`/note/${note.id}`)}
               >
-                {/* Select checkbox */}
-                <button
-                  className="absolute top-3 right-10 z-10 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSelectNote(note.id); }}
-                >
-                  {isSelected
-                    ? <CheckSquare className="w-5 h-5 text-primary-600" />
-                    : <Square className="w-5 h-5 text-gray-400" />
-                  }
-                </button>
+                {/* 관리자 전용: 선택 체크박스 */}
+                {isAdmin && (
+                  <button
+                    className="absolute top-3 right-10 z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSelectNote(note.id); }}
+                  >
+                    {isSelected
+                      ? <CheckSquare className="w-5 h-5 text-primary-600" />
+                      : <Square className="w-5 h-5 text-gray-400" />
+                    }
+                  </button>
+                )}
 
-                {/* Delete button */}
-                <button
-                  className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-400 hover:text-red-500"
-                  onClick={(e) => handleDelete(note.id, e)}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {/* 관리자 전용: 삭제 버튼 */}
+                {isAdmin && (
+                  <button
+                    className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-400 hover:text-red-500"
+                    onClick={(e) => handleDelete(note.id, e)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
 
                 <div className="flex items-start gap-3 mb-3">
                   <div className={cn(

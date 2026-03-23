@@ -2,28 +2,36 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import {
-  BookOpen, LayoutDashboard, FileText, Globe, Search,
-  Plus, Menu, X, Moon, Sun, LogOut, ChevronRight
+  BookOpen, LayoutDashboard, Globe, Search,
+  Plus, Menu, X, Moon, Sun, LogOut, Crown
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
-
-const navItems = [
-  { href: '/dashboard', icon: LayoutDashboard, label: '대시보드' },
-  { href: '/wiki', icon: Globe, label: '위키' },
-  { href: '/search', icon: Search, label: '검색' },
-];
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { theme, setTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   const supabase = createClient();
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const meta = session?.user?.app_metadata;
+      setIsAdmin(meta?.is_admin === true || meta?.role === 'admin');
+    });
+  }, [supabase.auth]);
+
+  const navItems = [
+    { href: '/dashboard', icon: LayoutDashboard, label: '대시보드' },
+    { href: '/wiki', icon: Globe, label: '위키' },
+    { href: '/search', icon: Search, label: '검색' },
+  ];
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -101,6 +109,31 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
+
+          {/* 관리자 메뉴 */}
+          {isAdmin && (
+            <>
+              {sidebarOpen && (
+                <p className="px-3 pt-4 pb-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  관리자
+                </p>
+              )}
+              {!sidebarOpen && <div className="border-t border-gray-100 dark:border-gray-800 my-2" />}
+              <Link
+                href="/admin"
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  pathname === '/admin'
+                    ? 'bg-yellow-50 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-yellow-50 dark:hover:bg-yellow-950 hover:text-yellow-700 dark:hover:text-yellow-300',
+                  !sidebarOpen && 'justify-center px-2'
+                )}
+              >
+                <Crown className="w-5 h-5 flex-shrink-0 text-yellow-500" />
+                {sidebarOpen && <span>회원 관리</span>}
+              </Link>
+            </>
+          )}
         </nav>
 
         {/* Bottom Actions */}
