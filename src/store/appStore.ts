@@ -55,11 +55,11 @@ interface AppState {
 }
 
 const INITIAL_STEPS: MergeProgress[] = [
-  { step: 1, totalSteps: 5, label: '멀티모달 파싱', status: 'waiting' },
-  { step: 2, totalSteps: 5, label: '엔티티 추출', status: 'waiting' },
-  { step: 3, totalSteps: 5, label: '중복/충돌 해결', status: 'waiting' },
-  { step: 4, totalSteps: 5, label: '위키 구조 설계', status: 'waiting' },
-  { step: 5, totalSteps: 5, label: '위키 문서 작성', status: 'waiting' },
+  { step: 1, totalSteps: 5, label: '🔍 멀티모달 파싱 (이미지 AI 분석)', status: 'waiting' },
+  { step: 2, totalSteps: 5, label: '🏷️ 엔티티 추출 (인물/장소/개념/키워드)', status: 'waiting' },
+  { step: 3, totalSteps: 5, label: '⚖️ 중복·충돌 해결 (통합/모순 탐지)', status: 'waiting' },
+  { step: 4, totalSteps: 5, label: '🏗️ 위키 구조 설계 (TOC·섹션 아웃라인)', status: 'waiting' },
+  { step: 5, totalSteps: 5, label: '✍️ 위키 문서 작성 (Gemini 2.5 Flash)', status: 'waiting' },
 ];
 
 export { INITIAL_STEPS };

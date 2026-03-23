@@ -114,8 +114,8 @@ export function MergeProgressBar() {
       {isRunning && !collapsed && (
         <div className="px-4 pb-3 mt-2 space-y-1.5">
           {steps.map((step) => (
-            <div key={step.step} className="flex items-center gap-2">
-              <div className="flex-shrink-0">
+            <div key={step.step} className="flex items-start gap-2">
+              <div className="flex-shrink-0 mt-0.5">
                 {step.status === 'done' && (
                   <CheckCircle className="w-3.5 h-3.5 text-green-500" />
                 )}
@@ -126,7 +126,7 @@ export function MergeProgressBar() {
                   <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 dark:border-gray-600" />
                 )}
               </div>
-              <span className={`text-xs ${
+              <span className={`text-xs leading-tight ${
                 step.status === 'done' ? 'text-green-600 dark:text-green-400 line-through opacity-60' :
                 step.status === 'processing' ? 'text-primary-600 dark:text-primary-400 font-medium' :
                 'text-gray-400 dark:text-gray-500'

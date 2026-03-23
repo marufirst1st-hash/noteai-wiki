@@ -23,6 +23,8 @@ export function MergeModal({ noteIds, onClose }: Props) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [autoStartTimer, setAutoStartTimer] = useState<number | null>(3);
   const [error, setError] = useState('');
+  const [currentStepMessage, setCurrentStepMessage] = useState(''); // 현재 단계 상세 메시지
+  const [stepExtraData, setStepExtraData] = useState<Record<number, string>>({}); // 단계별 추가 정보
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMountedRef = useRef(true);
@@ -112,7 +114,24 @@ export function MergeModal({ noteIds, onClose }: Props) {
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (data.step) updateStep(data.step, data.status);
+              if (data.step) {
+                updateStep(data.step, data.status);
+                // 서버에서 보내는 메시지 표시
+                if (data.message && data.status === 'processing') {
+                  setCurrentStepMessage(data.message as string);
+                }
+                // 단계별 추가 데이터 (키워드, 섹션 등)
+                if (data.data && data.status === 'done') {
+                  const stepData = data.data as Record<string, unknown>;
+                  let extraInfo = '';
+                  if (stepData.keywords) extraInfo = (stepData.keywords as string[]).join(', ');
+                  else if (stepData.duplicates !== undefined) extraInfo = `중복 ${stepData.duplicates}건, 모순 ${stepData.contradictions}건`;
+                  else if (stepData.sections) extraInfo = (stepData.sections as string[]).join(' · ');
+                  if (extraInfo) {
+                    setStepExtraData((prev) => ({ ...prev, [data.step as number]: extraInfo }));
+                  }
+                }
+              }
 
               if (data.slug) {
                 finalSlug = data.slug;
@@ -304,7 +323,7 @@ export function MergeModal({ noteIds, onClose }: Props) {
                     {steps.map((step) => (
                       <div
                         key={step.step}
-                        className={`flex items-center gap-3 p-2.5 rounded-lg transition-all ${
+                        className={`flex items-start gap-3 p-2.5 rounded-lg transition-all ${
                           step.status === 'processing'
                             ? 'bg-primary-50 dark:bg-primary-950 border border-primary-200 dark:border-primary-800'
                             : step.status === 'done'
@@ -312,7 +331,7 @@ export function MergeModal({ noteIds, onClose }: Props) {
                             : 'bg-gray-50 dark:bg-gray-800/50'
                         }`}
                       >
-                        <div className="flex-shrink-0 w-5 h-5">
+                        <div className="flex-shrink-0 w-5 h-5 mt-0.5">
                           {step.status === 'done' && <CheckCircle className="w-5 h-5 text-green-500" />}
                           {step.status === 'processing' && <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />}
                           {step.status === 'waiting' && (
@@ -322,13 +341,27 @@ export function MergeModal({ noteIds, onClose }: Props) {
                           )}
                           {step.status === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
                         </div>
-                        <span className={`text-sm ${
-                          step.status === 'processing' ? 'font-medium text-primary-700 dark:text-primary-300' :
-                          step.status === 'done' ? 'text-green-700 dark:text-green-400 line-through opacity-70' :
-                          'text-gray-400 dark:text-gray-500'
-                        }`}>
-                          {step.label}
-                        </span>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm block ${
+                            step.status === 'processing' ? 'font-medium text-primary-700 dark:text-primary-300' :
+                            step.status === 'done' ? 'text-green-700 dark:text-green-400 line-through opacity-70' :
+                            'text-gray-400 dark:text-gray-500'
+                          }`}>
+                            {step.label}
+                          </span>
+                          {/* 진행 중 단계 상세 메시지 */}
+                          {step.status === 'processing' && currentStepMessage && (
+                            <span className="text-xs text-primary-500 dark:text-primary-400 mt-0.5 block">
+                              → {currentStepMessage}
+                            </span>
+                          )}
+                          {/* 완료된 단계 추가 정보 */}
+                          {step.status === 'done' && stepExtraData[step.step] && (
+                            <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 block truncate">
+                              {stepExtraData[step.step]}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
