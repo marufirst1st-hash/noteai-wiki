@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 export const runtime = 'nodejs';
 
@@ -45,27 +43,9 @@ async function extractPdfText(buffer: Buffer): Promise<{ text: string; pageCount
     /* webpackIgnore: true */ 'pdfjs-dist/legacy/build/pdf.mjs'
   ) as typeof import('pdfjs-dist');
 
-  // Worker 파일 경로 설정 (Node.js 환경)
-  // Vercel 서버리스에서는 require.resolve로 실제 경로를 찾음
-  try {
-    // ESM 환경에서 worker 경로 해석
-    const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
-  } catch {
-    // fallback: 상대 경로
-    try {
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = path.dirname(__filename);
-      const workerPath = path.resolve(
-        __dirname,
-        '../../../../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'
-      );
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
-    } catch {
-      // 마지막 fallback: 패키지 상대 경로
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.mjs';
-    }
-  }
+  // Node.js fake worker 모드: import(workerSrc) 방식으로 worker를 로드
+  // 패키지 경로를 그대로 사용하면 node_modules에서 찾아서 로드됨
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.mjs';
 
   const uint8Array = new Uint8Array(buffer);
   const loadingTask = pdfjsLib.getDocument({
