@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 export const runtime = 'nodejs';
 
 /**
- * DOMMatrix polyfill – Node.js에는 없지만 pdfjs-dist/legacy가 참조함
+ * DOMMatrix polyfill – Node.js에는 없지만 pdfjs-dist가 참조함
  */
 function installDOMMatrixPolyfill() {
   if (typeof globalThis.DOMMatrix === 'undefined') {
@@ -33,17 +35,37 @@ function installDOMMatrixPolyfill() {
 
 /**
  * pdfjs-dist legacy 빌드로 PDF 텍스트 추출
+ * Node.js 서버 환경 전용 (Vercel serverless)
  */
 async function extractPdfText(buffer: Buffer): Promise<{ text: string; pageCount: number }> {
   installDOMMatrixPolyfill();
 
-  // dynamic import – legacy 빌드 사용 (Node.js 호환)
+  // legacy 빌드 dynamic import (webpackIgnore로 번들링 제외)
   const pdfjsLib = await import(
     /* webpackIgnore: true */ 'pdfjs-dist/legacy/build/pdf.mjs'
   ) as typeof import('pdfjs-dist');
 
-  // Worker 없이 메인 스레드에서 파싱
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+  // Worker 파일 경로 설정 (Node.js 환경)
+  // Vercel 서버리스에서는 require.resolve로 실제 경로를 찾음
+  try {
+    // ESM 환경에서 worker 경로 해석
+    const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
+  } catch {
+    // fallback: 상대 경로
+    try {
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+      const workerPath = path.resolve(
+        __dirname,
+        '../../../../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'
+      );
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
+    } catch {
+      // 마지막 fallback: 패키지 상대 경로
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.mjs';
+    }
+  }
 
   const uint8Array = new Uint8Array(buffer);
   const loadingTask = pdfjsLib.getDocument({
@@ -64,9 +86,11 @@ async function extractPdfText(buffer: Buffer): Promise<{ text: string; pageCount
     const pageText = textContent.items
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map((item: any) => ('str' in item ? item.str : ''))
-      .join(' ');
-    if (pageText.trim()) {
-      textParts.push(`[페이지 ${i}]\n${pageText.trim()}`);
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (pageText) {
+      textParts.push(`[페이지 ${i}]\n${pageText}`);
     }
   }
 
