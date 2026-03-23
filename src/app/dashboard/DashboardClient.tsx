@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatRelativeTime, cn } from '@/lib/utils';
 import {
   Plus, FileText, Network, Image, Upload, CheckSquare, Square,
-  Trash2, GitMerge, Search, Tag
+  Trash2, GitMerge, Search, Tag, BookOpen
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { MergeModal } from '@/components/ui/MergeModal';
@@ -28,7 +28,7 @@ interface Props {
 
 export function DashboardClient({ initialNotes, userId }: Props) {
   const router = useRouter();
-  const { notes, setNotes, selectedNotes, toggleSelectNote, clearSelection, deleteNote } = useAppStore();
+  const { notes, setNotes, selectedNotes, toggleSelectNote, clearSelection, deleteNote, wikifiedNoteIds } = useAppStore();
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [showMergeModal, setShowMergeModal] = useState(false);
@@ -152,21 +152,41 @@ export function DashboardClient({ initialNotes, userId }: Props) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((note) => {
             const isSelected = selectedNotes.includes(note.id);
+            const isWikified = wikifiedNoteIds.has(note.id);
             const typeConf = noteTypeConfig[note.note_type];
             const TypeIcon = typeConf.icon;
             return (
               <div
                 key={note.id}
                 className={cn(
-                  'card p-4 cursor-pointer group relative transition-all',
-                  isSelected && 'ring-2 ring-primary-500 border-primary-300'
+                  'card p-4 cursor-pointer group relative transition-all overflow-hidden',
+                  isSelected && 'ring-2 ring-primary-500 border-primary-300',
+                  isWikified && 'ring-2 ring-green-400 border-green-300 dark:border-green-700'
                 )}
                 onClick={() => router.push(`/note/${note.id}`)}
               >
+                {/* ✅ 위키화 완료 배지 (상단 좌측 리본) */}
+                {isWikified && (
+                  <div className="absolute top-0 left-0 z-10">
+                    <div className="bg-green-500 text-white text-[10px] font-bold px-3 py-0.5 rounded-br-lg flex items-center gap-1 shadow-sm">
+                      <BookOpen className="w-3 h-3" />
+                      위키화 완료
+                    </div>
+                  </div>
+                )}
+
+                {/* ✅ 위키화 완료 오버레이 (희미한 초록 배경) */}
+                {isWikified && (
+                  <div className="absolute inset-0 bg-green-50/40 dark:bg-green-900/20 pointer-events-none rounded-xl" />
+                )}
+
                 {/* 관리자 전용: 선택 체크박스 */}
                 {isAdmin && (
                   <button
-                    className="absolute top-3 right-10 z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className={cn(
+                      'absolute z-10 opacity-0 group-hover:opacity-100 transition-opacity',
+                      isWikified ? 'top-8 right-10' : 'top-3 right-10'
+                    )}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSelectNote(note.id); }}
                   >
                     {isSelected
@@ -179,14 +199,17 @@ export function DashboardClient({ initialNotes, userId }: Props) {
                 {/* 관리자 전용: 삭제 버튼 */}
                 {isAdmin && (
                   <button
-                    className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-400 hover:text-red-500"
+                    className={cn(
+                      'absolute z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-gray-400 hover:text-red-500',
+                      isWikified ? 'top-8 right-3' : 'top-3 right-3'
+                    )}
                     onClick={(e) => handleDelete(note.id, e)}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 )}
 
-                <div className="flex items-start gap-3 mb-3">
+                <div className={cn('flex items-start gap-3 mb-3', isWikified && 'mt-5')}>
                   <div className={cn(
                     'w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0',
                     note.note_type === 'text' && 'bg-blue-50 dark:bg-blue-950',
@@ -203,7 +226,10 @@ export function DashboardClient({ initialNotes, userId }: Props) {
                     )} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-900 dark:text-white text-sm truncate">
+                    <h3 className={cn(
+                      'font-semibold text-sm truncate',
+                      isWikified ? 'text-green-800 dark:text-green-200' : 'text-gray-900 dark:text-white'
+                    )}>
                       {note.title || '제목 없음'}
                     </h3>
                     <span className={cn('text-xs', typeConf.color)}>{typeConf.label}</span>
@@ -227,9 +253,14 @@ export function DashboardClient({ initialNotes, userId }: Props) {
 
                 <div className="flex items-center justify-between text-xs text-gray-400">
                   <span>{formatRelativeTime(note.updated_at)}</span>
-                  {isSelected && (
+                  {isSelected ? (
                     <span className="text-primary-600 font-medium">✓ 선택됨</span>
-                  )}
+                  ) : isWikified ? (
+                    <span className="text-green-600 dark:text-green-400 font-medium flex items-center gap-1">
+                      <BookOpen className="w-3 h-3" />
+                      위키화됨
+                    </span>
+                  ) : null}
                 </div>
               </div>
             );

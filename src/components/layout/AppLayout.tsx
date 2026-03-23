@@ -11,6 +11,7 @@ import {
 import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
+import { MergeProgressBar } from '@/components/ui/MergeProgressBar';
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -165,6 +166,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <main className="flex-1 overflow-y-auto">
         {children}
       </main>
+
+      {/* 위키 합치기 플로팅 진행바 - 어디서든 표시 */}
+      <MergeProgressBar />
     </div>
   );
 }
