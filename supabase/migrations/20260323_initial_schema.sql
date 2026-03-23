@@ -1,0 +1,93 @@
+-- ============================================================
+-- NoteAI Wiki - 초기 DB 스키마 (v1.0.0 기준 실제 현황)
+-- 생성일: 2026-03-23
+-- 목적: 실제 Supabase DB 현황 문서화 (이미 적용된 상태)
+-- ============================================================
+
+-- 주의: 이 파일은 현재 DB 상태를 기록한 것입니다.
+-- Supabase 대시보드에서는 이미 적용되어 있으므로 재실행하지 마세요.
+-- 새 마이그레이션은 20260323_002_xxx.sql 형식으로 추가하세요.
+
+-- ============================================================
+-- notes 테이블
+-- ============================================================
+-- id           UUID        PK
+-- user_id      UUID        FK → auth.users(id)
+-- title        TEXT        NOT NULL
+-- note_type    TEXT        'text' | 'image' | 'mindmap' | 'file'
+-- content_json TEXT        HTML/JSON 본문 (코드에서는 'content'로 참조)
+-- raw_text     TEXT        플레인 텍스트 (검색용)
+-- extracted_entities JSONB tags 등 추출된 엔티티
+-- status       TEXT        'active' | 'deleted' | 'draft'
+-- created_at   TIMESTAMPTZ DEFAULT now()
+-- updated_at   TIMESTAMPTZ DEFAULT now()
+
+-- ============================================================
+-- note_images 테이블
+-- ============================================================
+-- id           UUID        PK
+-- note_id      UUID        FK → notes(id)
+-- original_url TEXT        NOT NULL  (코드에서 public_url로 잘못 참조했던 컬럼)
+-- annotated_url TEXT       주석된 이미지 URL
+-- thumbnail_url TEXT       썸네일 URL
+-- ai_description TEXT      AI 설명 (코드에서 file_name으로 잘못 참조)
+-- ai_ocr_text  TEXT        OCR 텍스트
+-- tags         TEXT[]      태그 배열
+-- fabric_json  JSONB       Fabric.js 주석 데이터 (코드에서 annotation_data로 잘못 참조)
+-- width        INTEGER     이미지 너비
+-- height       INTEGER     이미지 높이
+-- file_size    INTEGER     파일 크기 (bytes)
+-- created_at   TIMESTAMPTZ DEFAULT now()
+
+-- ============================================================
+-- wiki_pages 테이블
+-- ============================================================
+-- id           UUID        PK
+-- user_id      UUID        FK → auth.users(id)  (코드에서 created_by로 참조)
+-- slug         TEXT        UNIQUE NOT NULL
+-- title        TEXT        NOT NULL
+-- content      TEXT        마크다운 본문
+-- content_html TEXT        HTML 변환본
+-- tags         TEXT[]      태그 배열
+-- category     TEXT        카테고리
+-- source_note_ids UUID[]   원본 메모 ID 목록
+-- version      INTEGER     DEFAULT 1
+-- word_count   INTEGER     단어 수
+-- is_published BOOLEAN     DEFAULT false
+-- created_at   TIMESTAMPTZ DEFAULT now()
+-- updated_at   TIMESTAMPTZ DEFAULT now()
+
+-- ============================================================
+-- note_embeddings 테이블
+-- ============================================================
+-- id           UUID        PK
+-- note_id      UUID        FK → notes(id)
+-- chunk_text   TEXT        NOT NULL  임베딩 청크 텍스트
+-- embedding    vector      임베딩 벡터
+-- model        TEXT        사용된 모델명
+-- created_at   TIMESTAMPTZ DEFAULT now()
+
+-- ============================================================
+-- wiki_embeddings 테이블
+-- ============================================================
+-- id           UUID        PK
+-- wiki_id      UUID        FK → wiki_pages(id)
+-- chunk_text   TEXT        임베딩 청크 텍스트
+-- embedding    vector      임베딩 벡터
+-- model        TEXT        사용된 모델명
+-- created_at   TIMESTAMPTZ DEFAULT now()
+
+-- ============================================================
+-- note_wiki_links 테이블
+-- ============================================================
+-- id           UUID        PK
+-- note_id      UUID        FK → notes(id)
+-- wiki_id      UUID        FK → wiki_pages(id)
+-- created_at   TIMESTAMPTZ DEFAULT now()
+
+-- ============================================================
+-- RPC 함수
+-- ============================================================
+-- find_similar_notes(embedding vector, match_count int) → TABLE
+-- search_notes(query_embedding vector, ...) → TABLE
+-- search_wikis(query_embedding vector, ...) → TABLE

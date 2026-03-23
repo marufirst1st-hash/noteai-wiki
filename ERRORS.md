@@ -1,0 +1,137 @@
+# 오류 기록부 (ERRORS.md)
+
+발생했던 오류와 원인, 해결책을 기록합니다.  
+**목적**: 같은 실수 반복 방지, 빠른 디버깅 참조용
+
+---
+
+## 오류 목록
+
+### [ERR-001] Supabase DB 스키마 ↔ 코드 불일치
+- **발생일**: 2026-03-23
+- **심각도**: 🔴 Critical (저장 기능 전체 중단)
+- **증상**: `/api/notes` POST → `500 Internal Server Error`
+- **원인**:
+  - DB 실제 컬럼: `content_json`, `raw_text`, `original_url`, `fabric_json`
+  - 코드가 기대한 컬럼: `content`, `tags`, `public_url`, `annotation_data`
+  - 초기 DB 스키마 설계와 코드 타입 정의가 별도로 작성되어 동기화되지 않음
+- **해결**:
+  - `notes` API에 `normalizeNote()` / `denormalizeNote()` 변환 함수 추가
+  - `note_images` 저장 시 `original_url`, `fabric_json` 컬럼 사용
+  - `dashboard/page.tsx`, `note/[id]/page.tsx` 서버사이드 데이터 변환 추가
+- **예방책**:
+  - ✅ 코드 작성 전 반드시 DB 테이블 실제 컬럼 목록 확인
+  - ✅ `src/types/index.ts` 인터페이스를 DB 컬럼과 항상 동기화
+  - ✅ 신규 테이블/컬럼 추가 시 이 문서에 스키마 변경 기록
+
+---
+
+### [ERR-002] GitHub 파일 크기 초과 (core dump 파일 커밋)
+- **발생일**: 2026-03-23
+- **심각도**: 🟠 Major (GitHub 푸시 차단)
+- **증상**: `git push` 실패 — `File core is 619.73 MB; exceeds GitHub's file size limit of 100.00 MB`
+- **원인**:
+  - 샌드박스에서 프로세스 크래시로 생성된 Linux core dump 파일(`core`, 620MB)이 `git add -A`에 포함됨
+  - `.gitignore`에 `core` 파일 패턴이 없었음
+- **해결**:
+  - `rm -f core` 후 `git commit --amend --no-edit`
+  - `.gitignore`에 `core`, `core.*` 추가
+- **예방책**:
+  - ✅ `.gitignore`에 항상 `core`, `core.*`, `*.dump` 포함
+  - ✅ `git add -A` 전 `git status`로 대용량 파일 확인
+  - ✅ 100MB 초과 파일은 Git LFS 또는 제외 처리
+
+---
+
+### [ERR-003] Vercel 배포 시 GitHub 연동 미설정
+- **발생일**: 2026-03-23
+- **심각도**: 🟠 Major (배포 실패)
+- **증상**: Vercel 배포 API → `400 Bad Request` — "login connection to the GitHub account must be added"
+- **원인**:
+  - Vercel 계정(maru1st-9448)에 GitHub 계정(marufirst1st-hash) OAuth 연결이 없었음
+  - Vercel CLI로 직접 배포 시도 시 GitHub 앱 설치도 안 되어 있었음
+- **해결**:
+  - https://github.com/apps/vercel/installations/new 에서 GitHub 앱 설치
+  - Vercel 대시보드 설정에서 GitHub 저장소 연결
+- **예방책**:
+  - ✅ 첫 배포 전 Vercel ↔ GitHub 연동 상태 확인
+  - ✅ 신규 프로젝트는 Vercel 대시보드에서 Import → GitHub 흐름 사용
+
+---
+
+### [ERR-004] Supabase `exec_sql` RPC 없음
+- **발생일**: 2026-03-23
+- **심각도**: 🟡 Minor (마이그레이션 방법 제한)
+- **증상**: `supabase.rpc('exec_sql', {...})` → `PGRST202: function not found`
+- **원인**:
+  - Supabase 기본 프로젝트에는 `exec_sql` 함수가 없음
+  - Management API(`api.supabase.com`)는 `service_role` 키가 아닌 Personal Access Token(`sbp_...`) 필요
+- **해결**:
+  - Supabase 대시보드 SQL Editor에서 직접 실행
+  - 또는 Supabase CLI `npx supabase db query --linked` 사용 (Personal Access Token 필요)
+- **예방책**:
+  - ✅ DB 스키마 변경은 반드시 `supabase/migrations/` 폴더에 SQL 파일로 관리
+  - ✅ Supabase Personal Access Token을 별도로 보관
+  - ✅ 코드 배포 전 로컬에서 스키마 검증
+
+---
+
+### [ERR-005] Next.js CVE-2025-66478 취약점
+- **발생일**: 2026-03-23
+- **심각도**: 🔴 Critical (보안 취약점)
+- **증상**: Vercel 배포 시 경고 — "vulnerable version of Next.js detected (CVE-2025-66478)"
+- **원인**: `next@15.1.0` 사용, 취약점이 패치된 버전 미사용
+- **해결**: `next@15.3.9`으로 업그레이드 (`package.json` 수정 후 재배포)
+- **예방책**:
+  - ✅ 배포 전 `npm audit` 실행
+  - ✅ Next.js 보안 공지 주기적 확인
+  - ✅ 의존성 버전을 최신 stable로 유지
+
+---
+
+## DB 스키마 현황 (2026-03-23 기준)
+
+코드 작성 시 반드시 아래 실제 컬럼명을 사용할 것.
+
+### `notes` 테이블
+| 코드 필드명 | DB 실제 컬럼 | 비고 |
+|---|---|---|
+| `content` | `content_json` | HTML/JSON 본문 |
+| `content` (텍스트) | `raw_text` | 플레인 텍스트 |
+| `tags` | `extracted_entities.tags` | JSONB 내 중첩 |
+| `metadata` | ❌ 없음 | API에서 무시 |
+| `id`, `user_id`, `title`, `note_type`, `status`, `created_at`, `updated_at` | 동일 | — |
+
+### `note_images` 테이블
+| 코드 필드명 | DB 실제 컬럼 | 비고 |
+|---|---|---|
+| `public_url` | `original_url` | 원본 이미지 URL |
+| `annotation_data` | `fabric_json` | Fabric.js JSON |
+| `file_name` | `ai_description` | 대체 사용 |
+| `annotated_url`, `thumbnail_url`, `tags`, `file_size` | 동일 | — |
+
+### `wiki_pages` 테이블
+| 코드 필드명 | DB 실제 컬럼 | 비고 |
+|---|---|---|
+| `created_by` | `user_id` | 작성자 ID |
+| `summary` | ❌ 없음 | API에서 무시 |
+| `id`, `slug`, `title`, `content`, `tags`, `version`, `is_published`, `created_at`, `updated_at` | 동일 | — |
+
+### `note_embeddings` 테이블
+| 코드 필드명 | DB 실제 컬럼 | 비고 |
+|---|---|---|
+| `chunk_text` | `chunk_text` | NOT NULL 필수 |
+| `embedding` | `embedding` | vector 타입 |
+
+---
+
+## 체크리스트 — 배포 전 확인사항
+
+```
+□ git status 확인 (불필요한 대용량 파일 없는지)
+□ npm run build 로컬 성공 확인
+□ DB 컬럼명과 코드 필드명 일치 확인 (ERRORS.md 스키마 현황 참조)
+□ 환경변수 5개 Vercel에 설정되어 있는지 확인
+□ npm audit 보안 취약점 없는지 확인
+□ 이 문서에 새 오류/변경 사항 추가
+```
