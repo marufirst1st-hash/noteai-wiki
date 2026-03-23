@@ -230,3 +230,42 @@
   - ✅ PDF/Excel 등 바이너리 파일은 반드시 서버사이드에서 전용 라이브러리로 파싱
   - ✅ 브라우저 `file.text()`는 텍스트 파일(txt/csv/md)에만 사용
   - ✅ 저장 시 원본 데이터를 충분히 보존할 것 (요약만 저장하면 안됨)
+
+---
+
+## ERR-010: pdfjs-dist DOMMatrix + Worker 오류 (Vercel 배포 환경)
+- **날짜**: 2026-03-23
+- **심각도**: 🔴 Critical
+- **증상**: POST /api/parse-file → 500 "Setting up fake worker failed"
+- **원인**:
+  1. `pdf-parse` v2.4.5가 `DOMMatrix`를 참조하지만 Node.js에는 없음
+  2. `pdfjs-dist` legacy 빌드도 동일하게 DOMMatrix 참조
+  3. `workerSrc = ''` 로 설정 시 "No workerSrc specified" 오류
+  4. `file://` URL 방식은 Linux에서 "host must be localhost" 오류
+  5. `pdfjs-dist` 를 webpack externals로 분리 시 Vercel `/var/task`에서 패키지 없음
+- **해결책**:
+  ```ts
+  // 1. DOMMatrix polyfill 설치
+  if (!globalThis.DOMMatrix) { globalThis.DOMMatrix = class DOMMatrix {...} }
+  
+  // 2. worker를 globalThis.pdfjsWorker에 주입
+  // pdfjs #mainThreadWorkerMessageHandler는 globalThis.pdfjsWorker.WorkerMessageHandler를 우선 사용
+  if (!globalThis.pdfjsWorker) {
+    globalThis.pdfjsWorker = require('pdfjs-dist/legacy/build/pdf.worker.mjs');
+  }
+  
+  // 3. workerSrc는 non-empty 문자열로 설정 (실제로는 globalThis.pdfjsWorker 사용)
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.mjs';
+  ```
+- **예방**: pdfjs-dist 업그레이드 시 globalThis.pdfjsWorker 주입 방식 유지 여부 확인
+
+---
+
+## ERR-011: PWA 아이콘 404 (/icon-192x192.png)
+- **날짜**: 2026-03-23
+- **심각도**: 🟡 Minor
+- **증상**: 브라우저 콘솔에 `/icon-192x192.png:1 Failed to load resource: 404`
+- **원인**: `src/app/layout.tsx`에서 `icon: '/icon-192x192.png'` 를 참조하지만
+  실제 파일은 `public/icons/icon-192x192.png` 경로에 있음
+- **해결책**: `layout.tsx`의 icons 경로를 `/icons/icon-192x192.png` 로 수정
+- **예방**: 아이콘 파일 추가 시 manifest.json과 layout.tsx 경로 동기화 유지
