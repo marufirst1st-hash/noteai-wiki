@@ -140,14 +140,18 @@ ${notesText}
 
         if (wikiErr) throw new Error('위키 저장 실패: ' + wikiErr.message);
 
-        // Link notes to wiki
-        try {
-          const links = noteIds.map((noteId: string) => ({
-            note_id: noteId,
-            wiki_id: wiki.id,
-          }));
-          await supabase.from('note_wiki_links').insert(links);
-        } catch { /* 링크 실패 무시 */ }
+        // Link notes to wiki (note_wiki_links)
+        const links = noteIds.map((noteId: string) => ({
+          note_id: noteId,
+          wiki_id: wiki.id,
+        }));
+        const { error: linkErr } = await supabase
+          .from('note_wiki_links')
+          .upsert(links, { onConflict: 'note_id,wiki_id', ignoreDuplicates: true });
+        if (linkErr) {
+          console.error('note_wiki_links 저장 실패:', linkErr.message);
+          // 실패해도 전체 흐름은 계속
+        }
 
         // Save to wiki_history (테이블이 있으면)
         try {
