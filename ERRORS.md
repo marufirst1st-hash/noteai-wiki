@@ -145,6 +145,31 @@
 
 ---
 
+### [ERR-007] xlsx dynamic import에서 `.default` undefined 오류
+- **발생일**: 2026-03-23
+- **심각도**: 🟠 Major (ERR-006 수정 후에도 Excel 파싱 재실패)
+- **증상**: `xlsx 파싱 오류: TypeError: Cannot read properties of undefined (reading 'read')`
+- **원인**:
+  - `xlsx` 패키지는 CommonJS 모듈 → `import('xlsx').default`가 `undefined`
+  - 수정 코드에서 `(await import('xlsx')).default.read(...)` 호출 → `undefined.read()` → TypeError
+  - ERR-006 수정 시 `.default` 접근 방식을 잘못 적용
+- **해결**:
+  ```ts
+  // ❌ 잘못된 방식
+  const XLSX = (await import('xlsx')).default;  // undefined!
+  
+  // ✅ 올바른 방식 (CJS 패키지는 .default 없이 직접 구조분해)
+  const xlsxModule = await import('xlsx');
+  const { read, utils } = xlsxModule.default ?? xlsxModule;
+  ```
+- **예방책**:
+  - ✅ npm 패키지 import 전 `node -e "const m=require('pkg'); console.log(typeof m.default)"` 로 구조 확인
+  - ✅ CJS 패키지: `import('pkg')` 후 `.default` 없이 바로 구조분해
+  - ✅ ESM 패키지: `import('pkg').default` 사용
+  - ✅ 안전한 패턴: `const { fn } = module.default ?? module`
+
+---
+
 ## 체크리스트 — 배포 전 확인사항
 
 ```

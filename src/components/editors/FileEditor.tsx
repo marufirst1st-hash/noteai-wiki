@@ -43,17 +43,20 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
 
     } else if (ext === 'xlsx' || ext === 'xls') {
       // ✅ xlsx는 바이너리 파일 → ArrayBuffer로 읽어야 함
+      // ⚠️ xlsx 패키지는 .default가 없으므로 named import 사용
       try {
-        const XLSX = (await import('xlsx')).default;
+        const xlsxModule = await import('xlsx');
+        // CJS 모듈: read, utils가 최상위에 있음 (default 없음)
+        const { read, utils } = xlsxModule.default ?? xlsxModule;
         const arrayBuffer = await file.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const workbook = read(arrayBuffer, { type: 'array' });
 
         // 모든 시트 데이터 추출
         const sheetsData: string[] = [];
         workbook.SheetNames.forEach((sheetName) => {
           const worksheet = workbook.Sheets[sheetName];
           // CSV 형식으로 변환
-          const csv = XLSX.utils.sheet_to_csv(worksheet);
+          const csv = utils.sheet_to_csv(worksheet);
           sheetsData.push(`## 시트: ${sheetName}\n${csv}`);
         });
 
