@@ -36,13 +36,15 @@ export async function POST(req: NextRequest) {
         // Step 1: Multimodal Parsing
         send({ step: 1, status: 'processing' });
         const parsedContent = notes.map((note) => {
-          const images = (note.note_images as Array<{ public_url: string; annotated_url?: string }> | null) || [];
+          const images = (note.note_images as Array<{ original_url: string; public_url?: string; annotated_url?: string }> | null) || [];
+          // content: content_json 우선, raw_text 대체
+          const noteContent = (note.content_json as string) || (note.raw_text as string) || '';
           return {
             id: note.id,
             title: note.title,
             type: note.note_type,
-            content: note.content || '',
-            images: images.map((img) => img.annotated_url || img.public_url),
+            content: noteContent,
+            images: images.map((img) => img.annotated_url || img.public_url || img.original_url),
           };
         });
 
@@ -128,9 +130,8 @@ ${notesText}
             slug,
             title,
             content: wikiContent,
-            summary: wikiContent.slice(0, 300),
             tags: [],
-            created_by: session.user.id,
+            user_id: session.user.id,
             version: 1,
             is_published: true,
           })
@@ -140,21 +141,24 @@ ${notesText}
         if (wikiErr) throw new Error('위키 저장 실패: ' + wikiErr.message);
 
         // Link notes to wiki
-        const links = noteIds.map((noteId: string) => ({
-          note_id: noteId,
-          wiki_id: wiki.id,
-          contribution_summary: '자동 병합',
-        }));
-        await supabase.from('note_wiki_links').insert(links);
+        try {
+          const links = noteIds.map((noteId: string) => ({
+            note_id: noteId,
+            wiki_id: wiki.id,
+          }));
+          await supabase.from('note_wiki_links').insert(links);
+        } catch { /* 링크 실패 무시 */ }
 
-        // Save to wiki_history
-        await supabase.from('wiki_history').insert({
-          wiki_id: wiki.id,
-          content: wikiContent,
-          version: 1,
-          changed_by: session.user.id,
-          change_summary: `${noteIds.length}개 메모에서 생성`,
-        });
+        // Save to wiki_history (테이블이 있으면)
+        try {
+          await supabase.from('wiki_history').insert({
+            wiki_id: wiki.id,
+            content: wikiContent,
+            version: 1,
+            changed_by: session.user.id,
+            change_summary: `${noteIds.length}개 메모에서 생성`,
+          });
+        } catch { /* wiki_history 없으면 무시 */ }
 
         send({ done: true, slug: wiki.slug, wikiId: wiki.id });
       } catch (err: unknown) {

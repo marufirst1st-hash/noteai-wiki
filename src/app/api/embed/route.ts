@@ -15,8 +15,9 @@ export async function POST(req: NextRequest) {
 
     if (!contentText && noteId) {
       const supabase = createAdminClient();
-      const { data } = await supabase.from('notes').select('title, content').eq('id', noteId).single();
-      contentText = `${data?.title}\n${data?.content || ''}`;
+      const { data } = await supabase.from('notes').select('title, content_json, raw_text').eq('id', noteId).single();
+      const noteContent = (data as Record<string, string> | null)?.content_json || (data as Record<string, string> | null)?.raw_text || '';
+      contentText = `${data?.title}\n${noteContent}`;
     }
 
     if (!contentText) return NextResponse.json({ error: '내용 없음' }, { status: 400 });
@@ -43,15 +44,18 @@ export async function POST(req: NextRequest) {
     if (noteId) {
       await supabase.from('note_embeddings').upsert({
         note_id: noteId,
+        chunk_text: contentText.slice(0, 2000),
         embedding,
-        model: 'text-embedding-004',
       });
     } else if (wikiId) {
-      await supabase.from('wiki_embeddings').upsert({
-        wiki_id: wikiId,
-        embedding,
-        model: 'text-embedding-004',
-      });
+      // wiki_embeddings 테이블이 있으면 저장, 없으면 무시
+      try {
+        await supabase.from('wiki_embeddings').upsert({
+          wiki_id: wikiId,
+          chunk_text: contentText.slice(0, 2000),
+          embedding,
+        });
+      } catch { /* wiki_embeddings 없으면 무시 */ }
     }
 
     return NextResponse.json({ success: true });

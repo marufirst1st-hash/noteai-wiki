@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     // Fallback: keyword search
     const { data: notesFallback } = await supabase
       .from('notes')
-      .select('id, title, content, note_type, created_at')
+      .select('id, title, content_json, raw_text, note_type, created_at')
       .eq('user_id', session.user.id)
       .eq('status', 'active')
       .ilike('title', `%${query}%`)
@@ -68,7 +68,12 @@ export async function POST(req: NextRequest) {
       .limit(5);
 
     return NextResponse.json([
-      ...(notesFallback || []).map((n) => ({ ...n, type: 'note', similarity: 0.5 })),
+      ...(notesFallback || []).map((n: Record<string, unknown>) => ({
+        ...n,
+        content: n.content_json ?? n.raw_text ?? '',
+        type: 'note',
+        similarity: 0.5,
+      })),
       ...(wikisFallback || []).map((w) => ({ ...w, type: 'wiki', similarity: 0.5 })),
     ]);
   }

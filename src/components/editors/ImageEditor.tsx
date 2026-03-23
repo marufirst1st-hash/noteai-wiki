@@ -202,16 +202,14 @@ export function ImageEditor({ userId, onBack, onSave, noteId, initialTitle = '' 
       if (!res.ok) throw new Error('저장 실패');
       const data = await res.json();
 
-      // Save note_images record
+      // Save note_images record (DB 컬럼명: original_url, fabric_json)
       await supabase.from('note_images').insert({
         note_id: data.id,
-        storage_path: `${userId}/${Date.now()}.png`,
-        public_url: imageUrl,
+        original_url: imageUrl,
         annotated_url: annotatedUrl,
-        annotation_data: annotationData,
-        file_name: title,
+        fabric_json: annotationData,
+        ai_description: title,
         file_size: 0,
-        mime_type: 'image/png',
       });
 
       toast.success('이미지 메모가 저장되었습니다!');
