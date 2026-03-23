@@ -24,11 +24,12 @@ const noteTypeConfig = {
 interface Props {
   initialNotes: Note[];
   userId: string;
+  initialWikifiedNoteIds?: string[]; // 서버에서 조회한 위키화 완료 메모 ID
 }
 
-export function DashboardClient({ initialNotes, userId }: Props) {
+export function DashboardClient({ initialNotes, userId, initialWikifiedNoteIds = [] }: Props) {
   const router = useRouter();
-  const { notes, setNotes, selectedNotes, toggleSelectNote, clearSelection, deleteNote, wikifiedNoteIds } = useAppStore();
+  const { notes, setNotes, selectedNotes, toggleSelectNote, clearSelection, deleteNote, wikifiedNoteIds, addWikifiedNotes } = useAppStore();
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [showMergeModal, setShowMergeModal] = useState(false);
@@ -38,6 +39,14 @@ export function DashboardClient({ initialNotes, userId }: Props) {
   useEffect(() => {
     setNotes(initialNotes);
   }, [initialNotes, setNotes]);
+
+  // DB에서 불러온 위키화 완료 메모 ID를 store에 초기화
+  useEffect(() => {
+    if (initialWikifiedNoteIds.length > 0) {
+      addWikifiedNotes(initialWikifiedNoteIds);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 관리자 권한 확인
   useEffect(() => {
