@@ -3,11 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 
 /**
- * DOMMatrix polyfill – Node.js에는 없지만 pdfjs-dist가 참조함
+ * DOMMatrix polyfill – Node.js에는 없지만 pdfjs-dist가 내부에서 참조함
  */
 function installDOMMatrixPolyfill() {
   if (typeof globalThis.DOMMatrix === 'undefined') {
-    // @ts-expect-error – polyfill
+    // @ts-expect-error – polyfill for Node.js
     globalThis.DOMMatrix = class DOMMatrix {
       a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
       m11 = 1; m12 = 0; m13 = 0; m14 = 0;
@@ -33,18 +33,33 @@ function installDOMMatrixPolyfill() {
 
 /**
  * pdfjs-dist legacy 빌드로 PDF 텍스트 추출
- * Node.js 서버 환경 전용 (Vercel serverless)
+ *
+ * 핵심 기법:
+ * 1. DOMMatrix polyfill 설치 (Node.js에 없음)
+ * 2. pdf.worker.mjs 를 먼저 import해서 globalThis.pdfjsWorker 에 주입
+ *    → pdfjs가 fake worker 모드에서 globalThis.pdfjsWorker.WorkerMessageHandler 를 직접 사용
+ *    → 별도 Worker process/thread 없이 메인 스레드에서 파싱
+ * 3. workerSrc 에 임의 문자열 설정 (빈 문자열이면 에러 발생)
  */
 async function extractPdfText(buffer: Buffer): Promise<{ text: string; pageCount: number }> {
   installDOMMatrixPolyfill();
 
-  // legacy 빌드 dynamic import (webpackIgnore로 번들링 제외)
+  // worker 모듈을 먼저 로드해서 globalThis에 주입
+  // pdfjs fake worker 모드에서 globalThis.pdfjsWorker.WorkerMessageHandler 를 우선 사용
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!(globalThis as any).pdfjsWorker) {
+    // require로 worker 로드 (타입 선언 없는 .mjs 파일 접근)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+    const workerMod: any = require('pdfjs-dist/legacy/build/pdf.worker.mjs');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).pdfjsWorker = workerMod;
+  }
+
   const pdfjsLib = await import(
     /* webpackIgnore: true */ 'pdfjs-dist/legacy/build/pdf.mjs'
   ) as typeof import('pdfjs-dist');
 
-  // Node.js fake worker 모드: import(workerSrc) 방식으로 worker를 로드
-  // 패키지 경로를 그대로 사용하면 node_modules에서 찾아서 로드됨
+  // workerSrc는 non-empty 문자열이어야 함 (실제로는 globalThis.pdfjsWorker 사용)
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.mjs';
 
   const uint8Array = new Uint8Array(buffer);
@@ -85,7 +100,7 @@ async function extractPdfText(buffer: Buffer): Promise<{ text: string; pageCount
  * 파일을 multipart/form-data로 받아서 실제 텍스트를 추출해 반환
  *
  * 지원 형식:
- * - PDF  → pdfjs-dist/legacy (Node.js 호환, DOMMatrix polyfill 포함)
+ * - PDF  → pdfjs-dist/legacy (Node.js 호환, DOMMatrix polyfill + globalThis.pdfjsWorker 주입)
  * - Excel (.xlsx/.xls) → xlsx 라이브러리로 모든 시트 CSV 변환
  * - CSV / TXT / MD → 텍스트 그대로 반환
  */
