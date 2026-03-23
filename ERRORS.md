@@ -206,3 +206,27 @@
 □ npm audit 보안 취약점 없는지 확인
 □ 이 문서에 새 오류/변경 사항 추가
 ```
+
+### [ERR-009] PDF/Excel 파일 내용 미추출 - 파일명만 분석
+- **발생일**: 2026-03-23
+- **심각도**: 🔴 Critical (파일 메모 핵심 기능 불동작)
+- **증상**:
+  - PDF 업로드 후 AI가 파일명만 분석 (실제 내용 0%)
+  - Excel 저장 후 위키화 시 데이터 없음
+- **원인**:
+  - PDF: `file.text()`로 읽으면 바이너리 → 깨진 문자열. 실제 텍스트 추출 불가
+  - Excel: `handleSave`에서 `rawContent: fileContent.slice(0, 1000)` 1000자만 저장
+  - `content: analysis || fileContent` → AI 분석 요약만 저장, 원본 데이터 손실
+  - analyze-file API: `gemini-2.0-flash` 구버전, 3000자 제한
+- **해결**:
+  - `/api/parse-file` 신규 서버사이드 API 생성
+    - PDF: `pdf-parse` 라이브러리 (Node.js runtime) → 실제 텍스트 추출
+    - Excel: `xlsx` 라이브러리 `buffer` 모드 → 모든 시트 CSV 변환
+  - FileEditor 재작성: 파일→parse-file→analyze-file 순서
+  - 저장 시 `AI분석 + 원본데이터 전체(최대 5만자)` 함께 저장
+  - analyze-file: `gemini-2.5-flash`, 5000자로 확대
+  - merge route: 파일 메모 8000자까지 처리
+- **예방책**:
+  - ✅ PDF/Excel 등 바이너리 파일은 반드시 서버사이드에서 전용 라이브러리로 파싱
+  - ✅ 브라우저 `file.text()`는 텍스트 파일(txt/csv/md)에만 사용
+  - ✅ 저장 시 원본 데이터를 충분히 보존할 것 (요약만 저장하면 안됨)
