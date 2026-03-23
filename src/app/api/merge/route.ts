@@ -134,16 +134,35 @@ JSON 없이 자연어로만 답변하세요.`;
       } catch {
         parsedContent = note.content?.replace(/<[^>]+>/g, '') || '';
       }
+    } else if (note.type === 'file') {
+      // 파일 메모: AI 분석 결과 + 원본 데이터 모두 활용
+      // content에는 "AI 분석\n---\n원본 데이터" 형식으로 저장됨
+      const raw = note.content?.replace(/<[^>]+>/g, '') || '';
+
+      // 원본 데이터 코드블록 추출 (```...``` 사이)
+      const codeBlockMatch = raw.match(/```[\s\S]*?```/);
+      const aiAnalysisPart = raw.split('---')[0]?.trim() || '';
+      const rawDataPart = codeBlockMatch
+        ? codeBlockMatch[0].replace(/```\n?/g, '').trim()
+        : raw;
+
+      // AI 분석 + 원본 데이터 앞부분 합산 (파일은 더 많이 허용)
+      parsedContent = [
+        aiAnalysisPart.slice(0, 2000),
+        rawDataPart ? `\n[원본 데이터 앞부분]\n${rawDataPart.slice(0, 6000)}` : '',
+      ].filter(Boolean).join('\n');
     } else {
-      // 텍스트/파일 - HTML 태그 제거 후 사용
+      // 텍스트 메모 - HTML 태그 제거
       parsedContent = note.content?.replace(/<[^>]+>/g, '') || '';
     }
 
+    // 타입별 content 길이 제한 (파일은 더 많이)
+    const maxLen = note.type === 'file' ? 8000 : 3000;
     results.push({
       id: note.id,
       title: note.title,
       type: note.type,
-      content: parsedContent.slice(0, 3000),
+      content: parsedContent.slice(0, maxLen),
       images: note.images,
     });
   }
