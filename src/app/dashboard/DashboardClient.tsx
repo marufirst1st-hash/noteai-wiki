@@ -237,11 +237,14 @@ export function DashboardClient({ initialNotes, userId }: Props) {
         </div>
       )}
 
-      {/* Merge Modal */}
+      {/* Merge Modal - 닫아도 백그라운드 진행, 선택 해제는 모달 닫을 때만 */}
       {showMergeModal && (
         <MergeModal
           noteIds={selectedNotes}
-          onClose={() => { setShowMergeModal(false); clearSelection(); }}
+          onClose={() => {
+            setShowMergeModal(false);
+            clearSelection();
+          }}
         />
       )}
     </div>
