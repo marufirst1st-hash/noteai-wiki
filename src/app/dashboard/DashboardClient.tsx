@@ -136,7 +136,7 @@ export function DashboardClient({ initialNotes, userId, initialWikifiedNoteIds =
             className="btn-primary text-sm py-1.5 ml-auto"
           >
             <GitMerge className="w-4 h-4 mr-1.5" />
-            위키로 합치기
+            지식 베이스에 추가
           </button>
           <button onClick={clearSelection} className="btn-secondary text-sm py-1.5">
             선택 해제
