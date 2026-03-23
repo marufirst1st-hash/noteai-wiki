@@ -6,6 +6,9 @@ const GEMINI_KEY = () => process.env.GEMINI_API_KEY!;
 // 마스터 위키 고정 slug (사용자 1명 = 위키 1개)
 const MASTER_SLUG = 'master-wiki';
 
+// 빠른 모델: gemini-2.0-flash (thinking 없음, 2~3배 빠름)
+const FAST_MODEL = 'gemini-2.0-flash';
+
 // SSE 헬퍼
 function sseData(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
@@ -14,12 +17,11 @@ function sseData(data: Record<string, unknown>): string {
 // Gemini 텍스트 생성
 async function geminiGenerate(
   prompt: string,
-  model = 'gemini-2.5-flash',
-  temperature = 0.4,
-  maxTokens = 8192
+  maxTokens = 8192,
+  temperature = 0.4
 ): Promise<string> {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY()}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${FAST_MODEL}:generateContent?key=${GEMINI_KEY()}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -31,34 +33,41 @@ async function geminiGenerate(
   );
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Gemini(${model}) 오류: ${res.status} - ${err.slice(0, 200)}`);
+    throw new Error(`Gemini 오류: ${res.status} - ${err.slice(0, 200)}`);
   }
   const data = await res.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
-// Gemini 멀티모달
+// Gemini 멀티모달 (이미지 분석)
 async function geminiMultimodal(textPrompt: string, imageUrls: string[]): Promise<string> {
   const parts: unknown[] = [{ text: textPrompt }];
-  for (const url of imageUrls.slice(0, 4)) {
-    try {
+
+  // 이미지 fetch 병렬 처리
+  const imageResults = await Promise.allSettled(
+    imageUrls.slice(0, 4).map(async (url) => {
       const imgRes = await fetch(url);
-      if (!imgRes.ok) continue;
+      if (!imgRes.ok) return null;
       const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
       const buffer = await imgRes.arrayBuffer();
-      parts.push({ inline_data: { mime_type: contentType, data: Buffer.from(buffer).toString('base64') } });
-    } catch {
-      parts.push({ text: `[이미지: ${url}]` });
+      return { mime_type: contentType, data: Buffer.from(buffer).toString('base64') };
+    })
+  );
+
+  for (const result of imageResults) {
+    if (result.status === 'fulfilled' && result.value) {
+      parts.push({ inline_data: result.value });
     }
   }
+
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY()}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${FAST_MODEL}:generateContent?key=${GEMINI_KEY()}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
       }),
     }
   );
@@ -79,145 +88,137 @@ interface NoteData {
   id: string; title: string; type: string; content: string; images: string[];
 }
 interface ParsedNote {
-  id: string; title: string; type: string; content: string; images: string[];
+  id: string; title: string; type: string; content: string;
 }
 interface MindNode { id: string; topic?: string; children?: MindNode[]; }
-interface EntityResult {
-  concepts: string[]; keywords: string[]; tags: string[]; summary: string;
-  people: string[]; places: string[]; dates: string[];
-}
 
 // ─────────────────────────────────────────
-// 단계별 AI 처리
+// 단계별 AI 처리 (최적화 버전)
 // ─────────────────────────────────────────
 
-/** 1단계: 새 메모들 파싱 (이미지 포함) */
-async function step1_parseNewNotes(notes: NoteData[]): Promise<ParsedNote[]> {
-  const results: ParsedNote[] = [];
-  for (const note of notes) {
+/** 1단계: 새 메모들 파싱 — Promise.all로 병렬 처리 */
+async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
+  const tasks = notes.map(async (note): Promise<ParsedNote> => {
     let content = '';
+
     if (note.type === 'mindmap') {
       try {
         const d = JSON.parse(note.content || '{}');
         const flatten = (n: MindNode, depth = 0): string =>
-          '  '.repeat(depth) + `- ${n.topic || n.id}\n` + (n.children || []).map(c => flatten(c, depth + 1)).join('');
+          '  '.repeat(depth) + `- ${n.topic || n.id}\n` +
+          (n.children || []).map(c => flatten(c, depth + 1)).join('');
         content = `[마인드맵]\n${flatten(d.nodeData || d)}`;
       } catch { content = note.content || ''; }
+
     } else if (note.type === 'image' && note.images.length > 0) {
       try {
         content = await geminiMultimodal(
-          `이미지를 분석하여 핵심 내용을 한국어로 설명하세요. 메모 제목: ${note.title}`,
+          `이미지를 분석하여 핵심 내용을 한국어 3문장으로 설명하세요. 제목: ${note.title}`,
           note.images
         );
       } catch { content = note.content?.replace(/<[^>]+>/g, '') || ''; }
+
     } else if (note.type === 'file') {
       const raw = note.content?.replace(/<[^>]+>/g, '') || '';
-      const aiPart = raw.split('---')[0]?.trim() || '';
-      const codeBlock = raw.match(/```[\s\S]*?```/)?.[0]?.replace(/```\n?/g, '').trim() || '';
-      content = [aiPart.slice(0, 2000), codeBlock ? `[원본 데이터]\n${codeBlock.slice(0, 6000)}` : ''].filter(Boolean).join('\n');
+      const aiPart = raw.split('---')[0]?.trim().slice(0, 1500) || '';
+      const codeBlock = raw.match(/```[\s\S]*?```/)?.[0]?.replace(/```\n?/g, '').trim().slice(0, 4000) || '';
+      content = [aiPart, codeBlock ? `[원본 데이터]\n${codeBlock}` : ''].filter(Boolean).join('\n');
+
     } else {
       content = note.content?.replace(/<[^>]+>/g, '') || '';
     }
-    results.push({
+
+    const maxLen = note.type === 'file' ? 5500 : 2000;
+    return {
       id: note.id, title: note.title, type: note.type,
-      content: content.slice(0, note.type === 'file' ? 8000 : 3000),
-      images: note.images,
-    });
-  }
-  return results;
+      content: content.slice(0, maxLen),
+    };
+  });
+
+  // 모든 메모 병렬 처리
+  return Promise.all(tasks);
 }
 
-/** 2단계: 엔티티 추출 */
-async function step2_extractEntities(parsedNotes: ParsedNote[]): Promise<EntityResult> {
-  const text = parsedNotes.map((n, i) => `=== 메모 ${i + 1}: ${n.title} ===\n${n.content}`).join('\n\n');
-  const prompt = `다음 메모들에서 핵심 정보를 추출하여 JSON으로 반환하세요:\n\n${text}\n\nJSON 형식:\n{"people":[],"places":[],"concepts":[],"dates":[],"keywords":[],"tags":[],"summary":""}`;
-  const res = await geminiGenerate(prompt, 'gemini-2.5-flash', 0.2, 1024);
-  return (parseJsonResponse(res) as EntityResult) || { people: [], places: [], concepts: [], dates: [], keywords: [], tags: [], summary: '' };
-}
-
-/** 3단계: 기존 위키에 새 내용 통합 (핵심 단계) */
-async function step3_integrateIntoWiki(
+/** 2+3단계 통합: 엔티티 추출 + 위키 통합을 단일 Gemini 호출로 처리 */
+async function step2_generateWiki(
   existingWiki: string | null,
   existingVersion: number,
   parsedNotes: ParsedNote[],
-  entities: EntityResult,
   allLinkedNoteCount: number
 ): Promise<{ content: string; title: string; tags: string[] }> {
   const notesDetail = parsedNotes.map((n, i) =>
-    `=== [새 메모 ${i + 1}] ${n.title} (${n.type}) ===\n${n.content}`
+    `=== [메모 ${i + 1}] ${n.title} (${n.type}) ===\n${n.content}`
   ).join('\n\n');
 
   const isFirstTime = !existingWiki || existingWiki.trim().length < 50;
+  const today = new Date().toLocaleDateString('ko-KR');
 
   let prompt: string;
 
   if (isFirstTime) {
-    // 최초 생성
-    prompt = `당신은 회사 지식 베이스를 관리하는 전문 위키 편집자입니다.
-아래 메모들을 바탕으로 회사 지식 베이스 위키를 처음 작성하세요.
+    prompt = `당신은 회사 지식 베이스를 관리하는 위키 편집자입니다.
+아래 메모들로 회사 지식 베이스 위키를 작성하세요.
 
-━━━ 추가할 메모들 (총 ${parsedNotes.length}개) ━━━
+━━━ 메모들 (총 ${parsedNotes.length}개) ━━━
 ${notesDetail}
-
-━━━ 추출된 핵심 정보 ━━━
-키워드: ${entities.keywords.join(', ')}
-개념: ${entities.concepts.join(', ')}
-요약: ${entities.summary}
 
 ━━━ 작성 지침 ━━━
-1. 문서 상단에 **마지막 업데이트** 날짜와 **총 메모 수** 표시
-2. ## 개요 섹션: 이 위키가 담고 있는 지식 범위 설명
-3. 내용 섹션들: 메모의 주제별로 자연스럽게 구성 (3~8개 섹션)
-4. 각 섹션 하단에 출처 메모 표시: > 📎 출처: [메모 제목]
-5. ## 키워드 인덱스 섹션: 태그와 주요 개념 나열
-6. 전문적이고 백과사전 스타일로 작성
-7. 최소 1000자 이상
+1. 첫 줄: WIKI_TITLE: [내용에 맞는 제목]
+2. 두 번째 줄: WIKI_TAGS: [태그1,태그2,태그3,...] (최대 10개)
+3. 세 번째 줄부터: 마크다운 본문
+   - 상단에 **마지막 업데이트**: ${today} | **메모 수**: ${allLinkedNoteCount}개
+   - ## 개요, 내용 섹션들 (3~6개), ## 키워드 인덱스
+   - 각 섹션 하단: > 📎 출처: [메모 제목]
+   - 최소 800자, 전문적 백과사전 스타일
 
-이 위키의 제목도 메모 내용에 맞게 자동으로 정하고, 첫 줄에 반드시 다음 형식으로 작성:
-WIKI_TITLE: [제목]
-
-그 다음 줄부터 마크다운 본문을 작성하세요:`;
+출력 형식:
+WIKI_TITLE: 제목
+WIKI_TAGS: 태그1,태그2,태그3
+마크다운 본문...`;
   } else {
-    // 기존 위키에 새 내용 통합
-    const existingPreview = existingWiki.slice(0, 6000);
-    prompt = `당신은 회사 지식 베이스를 관리하는 전문 위키 편집자입니다.
-기존 위키에 새 메모들의 내용을 통합하여 위키를 업데이트하세요.
+    const existingPreview = existingWiki.slice(0, 5000);
+    prompt = `당신은 회사 지식 베이스를 관리하는 위키 편집자입니다.
+기존 위키에 새 메모들을 통합하여 업데이트하세요.
 
 ━━━ 기존 위키 (v${existingVersion}) ━━━
-${existingPreview}${existingWiki.length > 6000 ? '\n... (이하 생략)' : ''}
+${existingPreview}${existingWiki.length > 5000 ? '\n... (이하 생략)' : ''}
 
-━━━ 새로 추가할 메모들 (${parsedNotes.length}개) ━━━
+━━━ 새 메모들 (${parsedNotes.length}개) ━━━
 ${notesDetail}
 
-━━━ 새 메모 핵심 정보 ━━━
-키워드: ${entities.keywords.join(', ')}
-요약: ${entities.summary}
-
 ━━━ 통합 지침 ━━━
-1. 문서 상단 **마지막 업데이트** 날짜를 오늘(${new Date().toLocaleDateString('ko-KR')})로 갱신
-2. **총 메모 수**를 ${allLinkedNoteCount}개로 갱신
-3. 새 메모 내용을 기존 관련 섹션에 자연스럽게 통합 (중복 제거, 모순 해결)
-4. 새 주제라면 새 섹션을 적절한 위치에 추가
-5. 각 섹션 하단 출처 메모 목록 유지/추가
-6. 기존 내용을 삭제하지 말고 보완하세요
-7. 전체 구조와 흐름이 자연스럽게 이어지도록
+1. 첫 줄: WIKI_TITLE: [제목 (변경 필요시만 수정)]
+2. 두 번째 줄: WIKI_TAGS: [태그1,태그2,...] (최대 10개)
+3. 세 번째 줄부터: 업데이트된 마크다운 본문
+   - **마지막 업데이트**: ${today} | **메모 수**: ${allLinkedNoteCount}개 로 갱신
+   - 새 내용을 기존 관련 섹션에 자연스럽게 통합 (중복 제거)
+   - 새 주제면 새 섹션 추가
+   - 기존 내용 삭제 금지, 보완만
 
-위키 제목이 더 이상 내용을 반영하지 못한다면 업데이트하고, 그렇지 않다면 유지하세요.
-첫 줄에 반드시 다음 형식으로 작성:
-WIKI_TITLE: [제목]
-
-그 다음 줄부터 업데이트된 마크다운 본문을 작성하세요:`;
+출력 형식:
+WIKI_TITLE: 제목
+WIKI_TAGS: 태그1,태그2,태그3
+마크다운 본문...`;
   }
 
-  const raw = await geminiGenerate(prompt, 'gemini-2.5-flash', 0.5, 12000);
+  // 단일 Gemini 호출 (구 step2 + step3 통합)
+  const raw = await geminiGenerate(prompt, 8192, 0.5);
 
   // 제목 파싱
-  const titleMatch = raw.match(/^WIKI_TITLE:\s*(.+)/m);
-  const title = titleMatch ? titleMatch[1].trim() : '회사 지식 베이스';
-  const content = raw.replace(/^WIKI_TITLE:\s*.+\n?/m, '').trim();
+  const lines = raw.split('\n');
+  const titleLine = lines.find(l => l.startsWith('WIKI_TITLE:'));
+  const tagsLine = lines.find(l => l.startsWith('WIKI_TAGS:'));
 
-  // 태그 병합
-  const tags = [...new Set([...entities.tags, ...entities.keywords.slice(0, 5)])].slice(0, 10);
+  const title = titleLine ? titleLine.replace('WIKI_TITLE:', '').trim() : '회사 지식 베이스';
+  const tags = tagsLine
+    ? tagsLine.replace('WIKI_TAGS:', '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 10)
+    : [];
+
+  // 본문: WIKI_TITLE, WIKI_TAGS 줄 제거
+  const content = lines
+    .filter(l => !l.startsWith('WIKI_TITLE:') && !l.startsWith('WIKI_TAGS:'))
+    .join('\n')
+    .trim();
 
   return { content, title, tags };
 }
@@ -246,38 +247,42 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        // ── 기존 마스터 위키 조회 ─────────────────
-        const { data: existingWiki } = await supabase
-          .from('wiki_pages')
-          .select('*')
-          .eq('slug', MASTER_SLUG)
-          .eq('user_id', session.user.id)
-          .single();
-
-        const isUpdate = !!existingWiki;
-
-        // 기존에 연결된 메모 ID 목록
-        const { data: existingLinks } = await supabase
-          .from('note_wiki_links')
-          .select('note_id')
-          .eq('wiki_id', existingWiki?.id || '00000000-0000-0000-0000-000000000000');
-
-        const alreadyLinkedIds = new Set((existingLinks || []).map((l: { note_id: string }) => l.note_id));
-
-        // 새로 추가되는 메모만 필터 (이미 연결된 메모도 포함해서 재분석)
-        const newNoteIds = noteIds.filter((id: string) => !alreadyLinkedIds.has(id));
-        const allNoteIds = [...new Set([...Array.from(alreadyLinkedIds), ...noteIds])];
-
-        // ── 1단계: 새 메모 파싱 ──────────────────
+        // ── 기존 마스터 위키 & 메모 데이터를 병렬로 조회 ──────────
         send({ step: 1, status: 'processing', message: `${noteIds.length}개 메모 분석 중...` });
 
-        const { data: notes } = await supabase
-          .from('notes')
-          .select('*, note_images(*)')
-          .in('id', noteIds);
+        const [wikiResult, notesResult] = await Promise.all([
+          supabase
+            .from('wiki_pages')
+            .select('*')
+            .eq('slug', MASTER_SLUG)
+            .eq('user_id', session.user.id)
+            .single(),
+          supabase
+            .from('notes')
+            .select('*, note_images(*)')
+            .in('id', noteIds),
+        ]);
+
+        const existingWiki = wikiResult.data;
+        const notes = notesResult.data;
+        const isUpdate = !!existingWiki;
 
         if (!notes?.length) throw new Error('메모를 찾을 수 없습니다.');
 
+        // 기존 연결 메모 조회 (위키가 있을 때만)
+        let alreadyLinkedIds = new Set<string>();
+        if (existingWiki) {
+          const { data: existingLinks } = await supabase
+            .from('note_wiki_links')
+            .select('note_id')
+            .eq('wiki_id', existingWiki.id);
+          alreadyLinkedIds = new Set((existingLinks || []).map((l: { note_id: string }) => l.note_id));
+        }
+
+        const newNoteIds = noteIds.filter((id: string) => !alreadyLinkedIds.has(id));
+        const allNoteIds = [...new Set([...Array.from(alreadyLinkedIds), ...noteIds])];
+
+        // ── 1단계: 메모 파싱 (이미지 병렬) ─────────────────────────
         const noteDataList: NoteData[] = notes.map((note) => {
           const images = (note.note_images as Array<{ original_url?: string; annotated_url?: string }> | null) || [];
           return {
@@ -289,40 +294,38 @@ export async function POST(req: NextRequest) {
           };
         });
 
-        const parsedNotes = await step1_parseNewNotes(noteDataList);
+        const parsedNotes = await step1_parseNotes(noteDataList);
         send({ step: 1, status: 'done' });
 
-        // ── 2단계: 엔티티 추출 ────────────────────
-        send({ step: 2, status: 'processing', message: '키워드 및 개념 추출 중...' });
-        const entities = await step2_extractEntities(parsedNotes);
-        send({ step: 2, status: 'done', data: { keywords: entities.keywords.slice(0, 5) } });
+        // ── 2단계: 엔티티 추출 (skip — step3에 통합) ─────────────
+        send({ step: 2, status: 'processing', message: '키워드 분석 중...' });
+        // 바로 done (실제 작업은 step3에서 동시에 처리)
+        send({ step: 2, status: 'done' });
 
-        // ── 3단계: 위키 통합 생성 ─────────────────
+        // ── 3단계: 위키 생성/통합 (단일 Gemini 호출) ─────────────
         send({
           step: 3,
           status: 'processing',
           message: isUpdate
-            ? `기존 위키(v${existingWiki.version})에 새 내용 통합 중...`
-            : '새 지식 베이스 위키 생성 중...',
+            ? `기존 위키(v${existingWiki.version})에 통합 중...`
+            : '새 지식 베이스 생성 중...',
         });
 
-        const { content: newContent, title: newTitle, tags: newTags } = await step3_integrateIntoWiki(
+        const { content: newContent, title: newTitle, tags: newTags } = await step2_generateWiki(
           isUpdate ? (existingWiki.content as string) : null,
           isUpdate ? (existingWiki.version as number) : 0,
           parsedNotes,
-          entities,
           allNoteIds.length
         );
         send({ step: 3, status: 'done' });
 
-        // ── 4단계: DB 저장 ────────────────────────
+        // ── 4단계: DB 저장 ─────────────────────────────────────
         send({ step: 4, status: 'processing', message: '위키 저장 중...' });
 
         let wikiId: string;
         const newVersion = isUpdate ? (existingWiki.version as number) + 1 : 1;
 
         if (isUpdate) {
-          // 기존 위키 업데이트
           const { error: updateErr } = await supabase
             .from('wiki_pages')
             .update({
@@ -336,7 +339,6 @@ export async function POST(req: NextRequest) {
           if (updateErr) throw new Error('위키 업데이트 실패: ' + updateErr.message);
           wikiId = existingWiki.id as string;
         } else {
-          // 신규 생성
           const { data: newWiki, error: insertErr } = await supabase
             .from('wiki_pages')
             .insert({
@@ -354,37 +356,41 @@ export async function POST(req: NextRequest) {
           wikiId = newWiki.id as string;
         }
 
-        // note_wiki_links 저장 (새 메모들만)
+        // note_wiki_links & wiki_history 병렬 저장
+        const savePromises: Promise<void>[] = [];
+
         if (newNoteIds.length > 0) {
           const links = newNoteIds.map((noteId: string) => ({ note_id: noteId, wiki_id: wikiId }));
-          await supabase.from('note_wiki_links').upsert(links, { onConflict: 'note_id,wiki_id', ignoreDuplicates: true });
+          savePromises.push(
+            Promise.resolve(
+              supabase.from('note_wiki_links').upsert(links, { onConflict: 'note_id,wiki_id', ignoreDuplicates: true })
+            ).then(() => {})
+          );
         }
 
-        // wiki_history 저장
-        try {
-          await supabase.from('wiki_history').insert({
-            wiki_id: wikiId,
-            content: newContent,
-            version: newVersion,
-            changed_by: session.user.id,
-            change_summary: `${noteIds.length}개 메모 추가 (총 ${allNoteIds.length}개 메모 반영)`,
-          });
-        } catch { /* wiki_history 없으면 무시 */ }
+        savePromises.push(
+          Promise.resolve(
+            supabase.from('wiki_history').insert({
+              wiki_id: wikiId,
+              content: newContent,
+              version: newVersion,
+              changed_by: session.user.id,
+              change_summary: `${noteIds.length}개 메모 추가 (총 ${allNoteIds.length}개)`,
+            })
+          ).then(() => {}).catch(() => {})
+        );
 
+        await Promise.all(savePromises);
         send({ step: 4, status: 'done' });
 
-        // ── 5단계: 임베딩 ─────────────────────────
+        // ── 5단계: 임베딩 (비동기 fire-and-forget) ──────────────
         send({ step: 5, status: 'processing', message: '검색 인덱스 업데이트 중...' });
-        try {
-          await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/embed`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Cookie': req.headers.get('cookie') || '' },
-            body: JSON.stringify({
-              wikiId,
-              text: `${newTitle}\n${entities.summary}\n${entities.keywords.join(' ')}`,
-            }),
-          });
-        } catch { /* 임베딩 실패해도 계속 */ }
+        // 임베딩은 결과를 기다리지 않음 (완료 응답 속도 향상)
+        fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/embed`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Cookie': req.headers.get('cookie') || '' },
+          body: JSON.stringify({ wikiId, text: `${newTitle}\n${newTags.join(' ')}` }),
+        }).catch(() => {});
         send({ step: 5, status: 'done' });
 
         // 완료
