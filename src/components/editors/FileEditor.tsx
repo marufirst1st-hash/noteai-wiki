@@ -26,57 +26,94 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
   const parseFile = async (file: File) => {
     setFileName(file.name);
     if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ''));
-    
+
     const ext = file.name.split('.').pop()?.toLowerCase();
-    
-    if (ext === 'csv' || ext === 'txt') {
+
+    if (ext === 'csv' || ext === 'txt' || ext === 'md') {
       const text = await file.text();
-      setFileContent(text.slice(0, 10000));
-      analyzeContent(text.slice(0, 5000), file.name);
+      const preview = text.slice(0, 10000);
+      setFileContent(preview);
+      analyzeContent(preview.slice(0, 5000), file.name);
+
     } else if (ext === 'pdf') {
-      // PDF: read as text (simplified)
       const text = await file.text();
       const cleaned = text.replace(/[^\x20-\x7E\n가-힣ㄱ-ㅎㅏ-ㅣ]/g, ' ').slice(0, 10000);
       setFileContent(cleaned);
       analyzeContent(cleaned.slice(0, 5000), file.name);
-    } else {
-      // For xlsx/xls, parse as CSV-like
+
+    } else if (ext === 'xlsx' || ext === 'xls') {
+      // ✅ xlsx는 바이너리 파일 → ArrayBuffer로 읽어야 함
       try {
-        const Papa = (await import('papaparse')).default;
+        const XLSX = (await import('xlsx')).default;
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+        // 모든 시트 데이터 추출
+        const sheetsData: string[] = [];
+        workbook.SheetNames.forEach((sheetName) => {
+          const worksheet = workbook.Sheets[sheetName];
+          // CSV 형식으로 변환
+          const csv = XLSX.utils.sheet_to_csv(worksheet);
+          sheetsData.push(`## 시트: ${sheetName}\n${csv}`);
+        });
+
+        const combined = sheetsData.join('\n\n');
+        const preview = combined.slice(0, 10000);
+        setFileContent(preview);
+        analyzeContent(preview.slice(0, 5000), file.name);
+      } catch (err) {
+        console.error('xlsx 파싱 오류:', err);
+        toast.error('Excel 파일 파싱에 실패했습니다.');
+        const fallback = `파일명: ${file.name}\n크기: ${(file.size / 1024).toFixed(1)} KB\n(파싱 실패 - 파일이 손상되었거나 지원하지 않는 형식일 수 있습니다)`;
+        setFileContent(fallback);
+        setAnalysis(`## 파일 업로드 완료\n\n**파일명**: ${file.name}\n**크기**: ${(file.size / 1024).toFixed(1)} KB\n\n> Excel 파일을 파싱하는 중 오류가 발생했습니다.`);
+      }
+
+    } else {
+      // 기타 파일: 텍스트로 읽기 시도
+      try {
         const text = await file.text();
-        const result = Papa.parse(text, { header: true });
-        const preview = JSON.stringify(result.data.slice(0, 20), null, 2);
+        const preview = text.slice(0, 5000);
         setFileContent(preview);
         analyzeContent(preview.slice(0, 3000), file.name);
       } catch {
-        const text = await file.text();
-        setFileContent(text.slice(0, 5000));
-        analyzeContent(text.slice(0, 3000), file.name);
+        const fallback = `파일명: ${file.name}\n크기: ${(file.size / 1024).toFixed(1)} KB\n(텍스트로 읽을 수 없는 파일 형식)`;
+        setFileContent(fallback);
+        setAnalysis(`## 파일 업로드 완료\n\n**파일명**: ${file.name}\n**크기**: ${(file.size / 1024).toFixed(1)} KB`);
       }
     }
   };
 
   const analyzeContent = async (content: string, fname: string) => {
+    // 내용이 비어있거나 너무 짧으면 로컬 분석으로 대체
+    const cleanContent = content.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim();
+    if (!cleanContent || cleanContent.length < 10) {
+      setAnalysis(`## 파일 분석 결과\n\n**파일명**: ${fname}\n**문자 수**: ${content.length}\n\n내용이 너무 짧거나 분석할 수 없는 형식입니다.`);
+      return;
+    }
+
     setAnalyzing(true);
     try {
-      const GEMINI_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
-      
       const response = await fetch('/api/analyze-file', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, fileName: fname }),
+        body: JSON.stringify({ content: cleanContent, fileName: fname }),
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         setAnalysis(data.analysis || '');
       } else {
-        // Simple local analysis
-        const lines = content.split('\n').filter(l => l.trim());
-        setAnalysis(`## 파일 분석 결과\n\n**파일명**: ${fname}\n**라인 수**: ${lines.length}\n**문자 수**: ${content.length}\n\n### 내용 미리보기\n\`\`\`\n${content.slice(0, 500)}\n\`\`\``);
+        // API 실패 시 로컬 분석으로 폴백
+        const lines = cleanContent.split('\n').filter((l) => l.trim());
+        setAnalysis(
+          `## 파일 분석 결과\n\n**파일명**: ${fname}\n**라인 수**: ${lines.length}\n**문자 수**: ${cleanContent.length}\n\n### 내용 미리보기\n\`\`\`\n${cleanContent.slice(0, 500)}\n\`\`\``
+        );
       }
     } catch {
-      setAnalysis(`## 파일 업로드 완료\n\n**파일명**: ${fname}\n**크기**: ${(content.length / 1024).toFixed(1)} KB`);
+      setAnalysis(
+        `## 파일 업로드 완료\n\n**파일명**: ${fname}\n**크기**: ${(content.length / 1024).toFixed(1)} KB`
+      );
     } finally {
       setAnalyzing(false);
     }

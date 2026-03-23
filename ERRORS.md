@@ -125,6 +125,26 @@
 
 ---
 
+### [ERR-006] Excel(.xlsx) 파일 업로드 시 /api/analyze-file 500 오류
+- **발생일**: 2026-03-23
+- **심각도**: 🟠 Major (Excel 파일 분석 기능 전체 중단)
+- **증상**: FileEditor에서 .xlsx 업로드 시 `POST /api/analyze-file 500 Internal Server Error`
+- **원인**:
+  - `.xlsx`는 ZIP 기반 바이너리 파일인데 `file.text()`로 읽으면 깨진 바이너리 문자열 반환
+  - 깨진 문자열(`PK\u0003\u0004...`)이 그대로 Gemini API로 전송 → Gemini가 처리 불가
+  - 기존 코드가 `papaparse`를 사용했으나 papaparse는 CSV 전용 (xlsx 미지원)
+- **해결**:
+  - `xlsx` npm 패키지 설치 (`npm install xlsx`)
+  - `file.arrayBuffer()` → `XLSX.read(buffer, { type: 'array' })` → `sheet_to_csv()` 방식으로 변경
+  - `analyze-file` API에 제어 문자 제거 로직 추가 (`replace(/[\x00-\x08...]/g, '')`)
+  - API 실패 시 로컬 폴백 분석 결과 반환하도록 개선
+- **예방책**:
+  - ✅ 바이너리 파일(.xlsx, .xls, .docx 등)은 반드시 `ArrayBuffer`로 읽기
+  - ✅ `file.text()`는 텍스트 파일(csv, txt, md)에만 사용
+  - ✅ API에 보내기 전 제어 문자 정리 필수
+
+---
+
 ## 체크리스트 — 배포 전 확인사항
 
 ```
