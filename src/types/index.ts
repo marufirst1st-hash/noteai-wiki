@@ -44,7 +44,8 @@ export interface WikiPage {
   content: string;
   summary?: string;
   tags: string[];
-  created_by: string;
+  user_id: string;
+  created_by?: string;
   version: number;
   is_published: boolean;
   created_at: string;

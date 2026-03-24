@@ -57,18 +57,21 @@ function scrollTo(anchor: string) {
 }
 
 export function WikiDetailClient({ wiki }: Props) {
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeAnchor, setActiveAnchor] = useState('');
   const supabase = createClient();
   const router = useRouter();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      const meta = session?.user?.app_metadata;
-      setIsAdmin(meta?.is_admin === true || meta?.role === 'admin');
+      if (!session) return;
+      // 본인 위키이거나 관리자이면 삭제 가능
+      const isAdmin = session.user.app_metadata?.is_admin === true || session.user.app_metadata?.role === 'admin';
+      setIsOwner(isAdmin || session.user.id === wiki.user_id);
     });
-  }, [supabase.auth]);
+  }, [supabase.auth, wiki.user_id]);
 
   // 스크롤 위치에 따라 활성 섹션 표시
   useEffect(() => {
@@ -93,10 +96,18 @@ export function WikiDetailClient({ wiki }: Props) {
   });
 
   const handleDelete = async () => {
-    if (!confirm(`"${wiki.title}" 위키를 삭제하시겠습니까?`)) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setTimeout(() => setConfirmDelete(false), 4000); // 4초 내 재클릭 없으면 취소
+      return;
+    }
     setDeleting(true);
+    setConfirmDelete(false);
+    // note_wiki_links 먼저 삭제 (FK 제약)
+    await supabase.from('note_wiki_links').delete().eq('wiki_id', wiki.id);
+    await supabase.from('wiki_history').delete().eq('wiki_id', wiki.id);
     const { error } = await supabase.from('wiki_pages').delete().eq('id', wiki.id);
-    if (error) { toast.error('삭제 실패'); setDeleting(false); return; }
+    if (error) { toast.error('삭제 실패: ' + error.message); setDeleting(false); return; }
     toast.success('위키가 삭제되었습니다.');
     router.push('/wiki');
   };
@@ -131,13 +142,18 @@ export function WikiDetailClient({ wiki }: Props) {
           <Link href="/wiki" className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
             <ArrowLeft className="w-5 h-5" />
           </Link>
-          {isAdmin && (
+          {isOwner && (
             <button
               onClick={handleDelete}
               disabled={deleting}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950 transition-colors disabled:opacity-50"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+                confirmDelete
+                  ? 'bg-red-600 text-white hover:bg-red-700 animate-pulse'
+                  : 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950'
+              }`}
             >
-              <Trash2 className="w-4 h-4" /> 삭제
+              <Trash2 className="w-4 h-4" />
+              {deleting ? '삭제 중...' : confirmDelete ? '한 번 더 클릭하여 확인' : '위키 삭제'}
             </button>
           )}
         </div>
