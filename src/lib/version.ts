@@ -1,11 +1,17 @@
 // 앱 버전 — package.json과 동기화 유지
-export const APP_VERSION = '0.9.1';
+export const APP_VERSION = '0.9.2';
 
 // 변경 이력 (최신순)
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
-    version: '0.9.1',
+    version: '0.9.2',
     date: '2026-03-24',
+    changes: [
+      '/wiki 하이퍼링크 클릭 스크롤 수정 (코드 분리)',
+      'h1/h2/h3 아이디 앱커 자동 부여',
+      '좌측 사이드바에 TOC(목차) 버튼 추가',
+    ],
+  },
     changes: [
       '위키 목록(/wiki) 페이지에 삭제 버튼 추가',
       '위키 삭제 버튼 미표시 버그 수정 (isOwner RLS 문제)',
