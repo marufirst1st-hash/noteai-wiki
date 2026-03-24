@@ -153,9 +153,25 @@ async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
 
     } else if (note.type === 'file') {
       const raw = note.content?.replace(/<[^>]+>/g, '') || '';
-      const aiPart = raw.split('---')[0]?.trim().slice(0, 1500) || '';
-      const codeBlock = raw.match(/```[\s\S]*?```/)?.[0]?.replace(/```\n?/g, '').trim().slice(0, 4000) || '';
-      content = [aiPart, codeBlock ? `[원본 데이터]\n${codeBlock}` : ''].filter(Boolean).join('\n');
+      // "---" 구분선 기준으로 AI분석 / 원본데이터 분리
+      const parts = raw.split(/\n---\n/);
+      const aiAnalysis = parts[0]?.trim() || '';
+      // 코드블록(원본 데이터)에서 실제 텍스트 추출
+      const rawDataMatch = raw.match(/```\n?([\s\S]*?)```/);
+      const rawData = rawDataMatch?.[1]?.trim() || '';
+
+      if (rawData.length > 100) {
+        // 원본 데이터가 있으면 원본 우선 (AI 설명보다 실제 내용이 중요)
+        content = rawData.slice(0, 5000);
+        if (aiAnalysis && aiAnalysis.length > 50) {
+          // AI 분석 요약도 앞에 붙임 (컨텍스트용, 짧게)
+          const shortSummary = aiAnalysis.slice(0, 500);
+          content = `[요약]\n${shortSummary}\n\n[원본 내용]\n${content}`;
+        }
+      } else {
+        // 원본 데이터 없으면 AI 분석 결과 사용
+        content = aiAnalysis.slice(0, 5000);
+      }
 
     } else {
       content = note.content?.replace(/<[^>]+>/g, '') || '';
