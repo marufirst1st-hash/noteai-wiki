@@ -216,11 +216,11 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
               {parseResult && !parsing && (
                 <div className="mt-1 space-y-0.5">
                   <p className="text-sm text-green-600 dark:text-green-400">
-                    ✓ 추출 완료 · {parseResult.charCount.toLocaleString()}자
+                    ✓ 전체 추출 완료 · {parseResult.charCount.toLocaleString()}자 전체 보존
                     {parseResult.pageCount && ` · ${parseResult.pageCount}페이지`}
                     {parseResult.sheetCount && ` · ${parseResult.sheetCount}시트`}
                   </p>
-                  <p className="text-xs text-gray-400">저장 후 &quot;지식 베이스에 추가&quot; 시 AI가 내용을 분석합니다</p>
+                  <p className="text-xs text-gray-400">저장 후 &quot;지식 베이스에 추가&quot; 시 AI가 전체 내용을 분석합니다</p>
                 </div>
               )}
               {parseError && <p className="text-sm text-red-600 mt-1">⚠ {parseError}</p>}
@@ -254,8 +254,9 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
             </button>
             {showRawContent && (
               <pre className="mt-2 bg-gray-50 dark:bg-gray-900 rounded-xl p-4 text-xs text-gray-600 dark:text-gray-400 overflow-x-auto max-h-[400px] overflow-y-auto whitespace-pre-wrap">
-                {parseResult.text.slice(0, 5000)}
-                {parseResult.text.length > 5000 && `\n\n... (${(parseResult.text.length - 5000).toLocaleString()}자 더 있음)`}
+                {/* 미리보기는 최대 3000자만 표시 (저장 데이터와 별개 — 실제 저장은 전체 보존) */}
+                {parseResult.text.slice(0, 3000)}
+                {parseResult.text.length > 3000 && `\n\n─── 미리보기 끝 (총 ${parseResult.charCount.toLocaleString()}자 전체가 저장됨) ───`}
               </pre>
             )}
           </div>

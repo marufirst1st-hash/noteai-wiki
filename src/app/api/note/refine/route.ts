@@ -91,7 +91,8 @@ ${originalText}
 
     return NextResponse.json({
       success: true,
-      original: originalText.slice(0, 500),
+      // original은 응답 미리보기용으로만 사용 (실제 저장은 refined 전체가 DB에 저장됨)
+      originalLength: originalText.length,
       refined,
     });
   } catch (err) {

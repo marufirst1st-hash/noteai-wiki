@@ -210,8 +210,8 @@ WIKI_TITLE:`;
           const existingSections = extractSections(existingContent);
           const sectionList = existingSections.map((s, i) => `${i + 1}. ${s.title}`).join('\n');
 
-          // 중복 확인: 각 새 메모에 대해 어느 섹션과 겹치는지 파악
-          const newContentSummary = newNotes.map(n => `[${n.title}]: ${n.content.slice(0, 800)}`).join('\n\n');
+          // 중복 확인: 각 새 메모의 전체 내용을 전달 (잘라내기 금지 — AI가 중복 여부를 정확히 판단해야 함)
+          const newContentSummary = newNotes.map(n => `[${n.title}]:\n${n.content}`).join('\n\n');
 
           const dupCheckPrompt = `통합 위키에 새 자료를 추가하려 합니다. 중복 내용을 확인하세요.
 

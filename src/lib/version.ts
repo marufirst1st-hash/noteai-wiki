@@ -1,8 +1,20 @@
 // 앱 버전 — package.json과 동기화 유지
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.0.1';
 
 // 변경 이력 (최신순)
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
+  {
+    version: '1.0.1',
+    date: '2026-03-24',
+    changes: [
+      '문서 잘림 완전 제거: raw_text 5000자 제한 삭제 (전체 원문 보존)',
+      'FileEditor: 50000자 저장 제한 삭제 (파일 전체 저장)',
+      'gemini.ts: 이미지 2개 제한 → 전체 이미지 전달',
+      'wikify: AI 출력 토큰 8192 → 16384 (긴 문서 출력 잘림 방지)',
+      'wiki/merge: 중복 분석 시 메모 내용 800자 요약 → 전체 전달 (정확한 중복 판단)',
+      'note/refine: 응답에서 원문 500자 미리보기 제거 (실제 저장에는 영향 없었음)',
+    ],
+  },
   {
     version: '1.0.0',
     date: '2026-03-24',

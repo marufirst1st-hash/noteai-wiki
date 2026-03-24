@@ -42,10 +42,11 @@ function denormalizeNote(body: Record<string, unknown>) {
   if (body.title !== undefined) dbData.title = body.title;
   if (body.note_type !== undefined) dbData.note_type = body.note_type;
   if (body.status !== undefined) dbData.status = body.status;
+  // ⚠️ raw_text는 전체 원문을 보존해야 하므로 절대 자르지 않음
   if (body.content !== undefined) {
     dbData.content_json = body.content;
     dbData.raw_text = typeof body.content === 'string'
-      ? body.content.replace(/<[^>]+>/g, '').slice(0, 5000)
+      ? body.content.replace(/<[^>]+>/g, '')
       : '';
   }
   if (body.tags !== undefined) {

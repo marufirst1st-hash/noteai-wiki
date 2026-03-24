@@ -51,7 +51,8 @@ export async function geminiMultimodal(
   imageUrls: string[]
 ): Promise<string> {
   const parts: unknown[] = [{ text: textPrompt }];
-  for (const url of imageUrls.slice(0, 2)) {
+  // Gemini Flash Lite는 최대 16개 이미지 지원 — 모든 이미지 전달
+  for (const url of imageUrls) {
     try {
       const r = await fetch(url);
       if (!r.ok) continue;

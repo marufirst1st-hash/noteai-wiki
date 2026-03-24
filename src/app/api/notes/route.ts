@@ -90,10 +90,11 @@ function denormalizeNote(body: Record<string, unknown>) {
   if (body.status !== undefined) dbData.status = body.status;
 
   // content → content_json (DB 컬럼)
+  // ⚠️ raw_text는 전체 원문을 보존해야 하므로 절대 자르지 않음
   if (body.content !== undefined) {
     dbData.content_json = body.content;
     dbData.raw_text = typeof body.content === 'string'
-      ? body.content.replace(/<[^>]+>/g, '').slice(0, 5000)
+      ? body.content.replace(/<[^>]+>/g, '')
       : '';
   }
 

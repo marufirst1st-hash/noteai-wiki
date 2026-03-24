@@ -100,7 +100,8 @@ ${originalText}
 TAGS:`;
 
   try {
-    const raw = await geminiText(prompt, 8192, 0.2);
+    // 긴 문서도 잘리지 않도록 최대 출력 토큰을 16384로 설정
+    const raw = await geminiText(prompt, 16384, 0.2);
 
     // TAGS 파싱
     const lines = raw.split('\n');
