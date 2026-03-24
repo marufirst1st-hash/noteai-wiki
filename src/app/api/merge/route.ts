@@ -191,7 +191,73 @@ async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
   return results;
 }
 
-/** 2+3단계 통합: 위키 생성/업데이트 — 내용 정리 중심 */
+// ─────────────────────────────────────────
+// 위키 섹션 파서 유틸리티
+// ─────────────────────────────────────────
+
+/** 마크다운에서 ## 섹션 목록 추출 */
+function extractSections(wikiContent: string): string[] {
+  return (wikiContent.match(/^## .+/gm) || []).map(h => h.replace(/^## /, '').replace(/\s*\{#[^}]+\}/, '').trim());
+}
+
+/** 기존 위키의 목차 블록을 새 목차로 교체 */
+function replaceToc(wikiContent: string, newToc: string): string {
+  // ## 목차 ... --- 사이를 교체
+  const tocRegex = /^## 목차[\s\S]*?(?=\n---\n|\n## (?!목차))/m;
+  if (tocRegex.test(wikiContent)) {
+    return wikiContent.replace(tocRegex, newToc + '\n');
+  }
+  // 목차 없으면 맨 앞에 삽입
+  return newToc + '\n\n---\n\n' + wikiContent;
+}
+
+/** 전체 섹션(앵커 포함) 목록으로 목차 마크다운 생성 */
+function buildToc(sections: Array<{ title: string; anchor: string }>): string {
+  const items = sections.map(s => `- [${s.title}](#${s.anchor})`).join('\n');
+  return `## 목차\n${items}`;
+}
+
+/** 제목 → 앵커 변환 (영문·숫자만 남기고, 공백은 -, 한글은 romanize 간략화) */
+function titleToAnchor(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^\w\s가-힣]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/[가-힣]+/g, (m) => {
+      // 한글이 섞인 경우 숫자 해시로 대체 (앵커 고유성 보장)
+      let hash = 0;
+      for (const c of m) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff;
+      return 'sec-' + hash.toString(16);
+    })
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'section';
+}
+
+/** 기존 위키에서 특정 섹션 이름 뒤에 내용 추가 */
+function insertIntoSection(wikiContent: string, sectionTitle: string, newContent: string): string {
+  // "## 섹션명 {#...}" 또는 "## 섹션명" 패턴으로 찾기
+  const escapedTitle = sectionTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const sectionRegex = new RegExp(`(^## ${escapedTitle}(?:\\s*\\{#[^}]+\\})?)([\\s\\S]*?)(?=\\n## |$)`, 'm');
+  const match = wikiContent.match(sectionRegex);
+  if (!match) return wikiContent + '\n\n' + newContent; // 섹션 없으면 뒤에 추가
+
+  const sectionEnd = match.index! + match[0].length;
+  // 섹션 끝(다음 ## 직전)에 삽입
+  return (
+    wikiContent.slice(0, sectionEnd).trimEnd() +
+    '\n\n' + newContent.trim() +
+    '\n' +
+    wikiContent.slice(sectionEnd)
+  );
+}
+
+/** 2+3단계 통합: 위키 생성/업데이트
+ *
+ *  핵심 원칙:
+ *  - 신규 위키: AI가 원문 전체를 위키 형식으로 변환
+ *  - 기존 위키 업데이트: AI는 "새 내용을 위키 섹션 블록으로 변환"만 담당
+ *    → 기존 위키는 코드에서 보존 후 AI 출력을 삽입 (AI가 기존 내용 절대 수정 불가)
+ */
 async function step2_generateWiki(
   existingWiki: string | null,
   existingVersion: number,
@@ -205,103 +271,193 @@ async function step2_generateWiki(
   const isFirstTime = !existingWiki || existingWiki.trim().length < 50;
   const today = new Date().toLocaleDateString('ko-KR');
 
-  let prompt: string;
-
+  // ── 신규 위키: AI가 전체 위키 초안 작성 ────────────────────────────────
   if (isFirstTime) {
-    prompt = `아래는 회사 업무 자료입니다. 이 내용을 위키 문서로 만들어주세요.
+    const prompt = `아래 자료를 위키 문서로 변환하세요. 내용을 요약하거나 축약하지 말고 원문 그대로 구조화하세요.
 
 ━━━ 자료 원문 ━━━
 ${notesDetail}
 
-━━━ 출력 형식 (반드시 준수) ━━━
+━━━ 출력 형식 ━━━
 첫 줄: WIKI_TITLE: [제목]
 두 번째 줄: WIKI_TAGS: [태그1,태그2,...] (최대 10개)
 세 번째 줄부터: 마크다운 위키 본문
 
-━━━ 위키 본문 필수 구조 ━━━
+━━━ 위키 본문 구조 ━━━
 **마지막 업데이트**: ${today} | **자료 수**: ${allLinkedNoteCount}개
 
 ## 목차
-- [섹션1 제목](#섹션1-앵커)
-- [섹션2 제목](#섹션2-앵커)
-- [섹션3 제목](#섹션3-앵커)
-... (모든 ## 섹션을 목차에 나열)
+- [섹션1](#앵커1)
+- [섹션2](#앵커2)
 
 ---
 
-## 섹션1 제목 {#섹션1-앵커}
-내용...
+## 섹션1 제목 {#앵커1}
+(원문 내용 그대로)
 
-## 섹션2 제목 {#섹션2-앵커}
-내용...
+## 섹션2 제목 {#앵커2}
+(원문 내용 그대로)
 
-━━━ 작성 규칙 ━━━
-1. 목차(## 목차)를 반드시 본문 최상단에 작성, 각 항목은 해당 섹션으로 이동하는 링크
-2. 모든 ## 헤딩에 {#앵커id} 형식으로 앵커 추가 (한글은 영문으로 변환, 예: {#qa-list})
-3. 관련 섹션 간 상호 링크 추가 (예: "자세한 내용은 [시공 절차](#construction-process) 참고")
-4. 원문 내용을 그대로 정리 — Q&A는 표/항목으로, 절차는 순서대로, 데이터는 항목별로
-5. 내용을 "설명"하거나 "분석"하지 말고, 내용 자체를 구조화
-6. > 📎 출처: [메모 제목] 을 각 섹션 하단에 추가
+━━━ 작성 규칙 (엄수) ━━━
+- 원문의 모든 항목을 빠짐없이 포함 (요약·생략 절대 금지)
+- Q&A → 각 질문을 **Q.** / **A.** 형식으로 전부 나열
+- 표 데이터 → 마크다운 표(|열1|열2|) 형식으로 전부 기재
+- 절차/단계 → 번호 목록으로 순서대로 전부 기재
+- 섹션 간 하이퍼링크 추가 (예: [시공 절차](#construction) 참고)
+- 각 섹션 끝에 > 📎 출처: [메모 제목] 추가
 
-WIKI_TITLE: 제목
-WIKI_TAGS: 태그1,태그2
-본문...`;
-  } else {
-    // 기존 위키 전체를 전달 (잘리지 않게)
-    // 단, 너무 길면 AI 컨텍스트 초과 → 최대 12000자 (8192 토큰 기준 안전선)
-    const existingFull = existingWiki.length > 12000
-      ? existingWiki.slice(0, 12000) + '\n\n... [위키 후반부 생략 — 새 내용 추가 시 이어서 작성] ...'
-      : existingWiki;
+WIKI_TITLE:
+WIKI_TAGS:
+`;
 
-    prompt = `당신은 위키 편집자입니다. 기존 위키에 새 자료를 **섹션별로 정확히** 통합하세요.
+    const raw = await geminiGenerate(prompt, 16384, 0.3);
+    return parseWikiOutput(raw, '회사 지식 베이스');
+  }
 
-━━━ 기존 위키 전체 (v${existingVersion}) ━━━
-${existingFull}
+  // ── 기존 위키 업데이트: AI는 새 내용 변환만, 코드에서 병합 ─────────────────
+  // 1) 기존 섹션 목록 추출
+  const existingSections = extractSections(existingWiki);
+
+  // 2) AI에게: 새 내용을 위키 섹션 블록으로 변환 + 어느 기존 섹션에 넣을지 지정
+  const sectionList = existingSections.length > 0
+    ? `기존 섹션 목록:\n${existingSections.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}`
+    : '(기존 섹션 없음)';
+
+  const prompt = `새 자료를 위키 섹션 블록으로 변환하세요. 기존 위키는 건드리지 않습니다.
 
 ━━━ 새로 추가할 자료 ━━━
 ${notesDetail}
 
+━━━ ${sectionList}
+
 ━━━ 출력 형식 (반드시 준수) ━━━
-첫 줄: WIKI_TITLE: [제목]
-두 번째 줄: WIKI_TAGS: [태그1,태그2,...]
-세 번째 줄부터: 업데이트된 마크다운 위키 본문 **전체** (기존 내용 포함)
+WIKI_TITLE: [전체 위키 제목 — 기존과 동일하게 유지하거나 포괄적으로 수정]
+WIKI_TAGS: [기존 태그 + 새 태그, 최대 10개]
+---SECTIONS---
+각 새 내용 블록을 아래 형식으로 출력:
 
-━━━ 통합 규칙 (엄격히 준수) ━━━
-1. **마지막 업데이트**: ${today} | **자료 수**: ${allLinkedNoteCount}개 로 갱신
-2. ## 목차를 최상단에 유지, 새 섹션 추가 시 목차에도 링크 추가
-3. 모든 ## 헤딩의 {#앵커id} 유지, 새 섹션엔 앵커 추가
-4. 새 자료를 처리하는 방법:
-   a) 기존 섹션과 **주제가 동일하거나 관련**이 있으면 → 해당 섹션 **내부에** 새 항목을 추가
-   b) 기존 섹션과 **주제가 전혀 다른** 새 내용이면 → 새 섹션(## 제목)을 생성하고 목차에 링크 추가
-5. 기존 내용은 **절대 삭제·요약하지 마세요** — 기존 내용을 그대로 유지하면서 새 내용만 추가
-6. 새 자료의 내용을 표, 목록, 단계별 절차 등 적절한 형식으로 구조화
-7. 새 자료 섹션 하단에 > 📎 출처: [메모 제목] 추가
+TARGET_SECTION: [기존 섹션명 | NEW]
+SECTION_TITLE: [기존 섹션명 그대로 | 새 섹션 제목]
+SECTION_ANCHOR: [기존 앵커 | 새 앵커 영문]
+CONTENT:
+(위키 마크다운 내용 — 원문 그대로, 요약 절대 금지)
+- Q&A → **Q.** / **A.** 형식으로 전부 나열
+- 표 데이터 → 마크다운 표로 전부 기재
+- 절차 → 번호 목록으로 전부 기재
+> 📎 출처: [메모 제목]
+---END---
 
-WIKI_TITLE: 제목
-WIKI_TAGS: 태그1,태그2
-본문...`;
+TARGET_SECTION 규칙:
+- 기존 섹션 목록에 관련 섹션이 있으면 → 그 섹션명 그대로 사용
+- 새 주제라면 → "NEW"
+- 여러 섹션에 나눠 넣어도 됨 (블록 반복)
+`;
+
+  const raw = await geminiGenerate(prompt, 16384, 0.3);
+
+  // 3) AI 출력 파싱
+  const { title: newTitle, tags: newTags, sectionsRaw } = parseUpdateOutput(raw);
+
+  // 4) 코드에서 기존 위키에 새 섹션 블록 병합 (기존 내용 절대 수정 안 함)
+  let updatedWiki = existingWiki;
+
+  // 날짜/자료 수 갱신
+  updatedWiki = updatedWiki.replace(
+    /\*\*마지막 업데이트\*\*:.*?\|.*?\*\*자료 수\*\*:[^\n]*/,
+    `**마지막 업데이트**: ${today} | **자료 수**: ${allLinkedNoteCount}개`
+  );
+
+  for (const block of sectionsRaw) {
+    if (block.targetSection === 'NEW') {
+      // 새 섹션: 위키 끝에 추가
+      const anchor = block.anchor || titleToAnchor(block.title);
+      updatedWiki = updatedWiki.trimEnd() + `\n\n## ${block.title} {#${anchor}}\n\n${block.content.trim()}\n`;
+    } else {
+      // 기존 섹션 내부에 삽입
+      updatedWiki = insertIntoSection(updatedWiki, block.targetSection, block.content.trim());
+    }
   }
 
-  // 단일 Gemini 호출 (구 step2 + step3 통합) — 긴 위키 출력을 위해 16384 토큰
-  const raw = await geminiGenerate(prompt, 16384, 0.5);
+  // 5) 목차 재생성 (전체 섹션 기준으로)
+  const allSectionHeaders = (updatedWiki.match(/^## .+/gm) || [])
+    .filter(h => !h.startsWith('## 목차'));
+  const tocSections = allSectionHeaders.map(h => {
+    const titlePart = h.replace(/^## /, '');
+    const anchorMatch = titlePart.match(/\{#([^}]+)\}/);
+    const anchor = anchorMatch ? anchorMatch[1] : titleToAnchor(titlePart.replace(/\s*\{#[^}]+\}/, '').trim());
+    const title = titlePart.replace(/\s*\{#[^}]+\}/, '').trim();
+    return { title, anchor };
+  });
+  const newToc = buildToc(tocSections);
+  updatedWiki = replaceToc(updatedWiki, newToc);
 
-  // 제목 파싱
+  return { content: updatedWiki, title: newTitle || '회사 지식 베이스', tags: newTags };
+}
+
+/** AI 출력에서 WIKI_TITLE / WIKI_TAGS / 본문 파싱 */
+function parseWikiOutput(raw: string, defaultTitle: string): { content: string; title: string; tags: string[] } {
   const lines = raw.split('\n');
   const titleLine = lines.find(l => l.startsWith('WIKI_TITLE:'));
   const tagsLine = lines.find(l => l.startsWith('WIKI_TAGS:'));
-
-  const title = titleLine ? titleLine.replace('WIKI_TITLE:', '').trim() : '회사 지식 베이스';
+  const title = titleLine ? titleLine.replace('WIKI_TITLE:', '').trim() : defaultTitle;
   const tags = tagsLine
     ? tagsLine.replace('WIKI_TAGS:', '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 10)
     : [];
-
-  // 본문: WIKI_TITLE, WIKI_TAGS 줄 제거
   const content = lines
     .filter(l => !l.startsWith('WIKI_TITLE:') && !l.startsWith('WIKI_TAGS:'))
     .join('\n')
     .trim();
-
   return { content, title, tags };
+}
+
+/** 업데이트용 AI 출력 파싱 (TARGET_SECTION / SECTION_TITLE / CONTENT 블록) */
+function parseUpdateOutput(raw: string): {
+  title: string;
+  tags: string[];
+  sectionsRaw: Array<{ targetSection: string; title: string; anchor: string; content: string }>;
+} {
+  const lines = raw.split('\n');
+  const titleLine = lines.find(l => l.startsWith('WIKI_TITLE:'));
+  const tagsLine = lines.find(l => l.startsWith('WIKI_TAGS:'));
+  const title = titleLine ? titleLine.replace('WIKI_TITLE:', '').trim() : '';
+  const tags = tagsLine
+    ? tagsLine.replace('WIKI_TAGS:', '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 10)
+    : [];
+
+  const sectionsRaw: Array<{ targetSection: string; title: string; anchor: string; content: string }> = [];
+
+  // ---SECTIONS--- 이후를 블록 단위로 파싱
+  const sectionsStart = raw.indexOf('---SECTIONS---');
+  if (sectionsStart === -1) {
+    // 폴백: 전체를 하나의 NEW 섹션으로 처리
+    const bodyLines = lines.filter(l => !l.startsWith('WIKI_TITLE:') && !l.startsWith('WIKI_TAGS:') && l !== '---SECTIONS---' && l !== '---END---');
+    sectionsRaw.push({ targetSection: 'NEW', title: '새 내용', anchor: 'new-content-' + Date.now(), content: bodyLines.join('\n').trim() });
+    return { title, tags, sectionsRaw };
+  }
+
+  const sectionsBody = raw.slice(sectionsStart + '---SECTIONS---'.length);
+  // 블록 분리: TARGET_SECTION: 으로 시작하는 각 블록
+  const blockRegex = /TARGET_SECTION:\s*(.+?)\nSECTION_TITLE:\s*(.+?)\nSECTION_ANCHOR:\s*(.+?)\nCONTENT:\n([\s\S]*?)(?=\nTARGET_SECTION:|\n---END---|$)/g;
+  let match;
+  while ((match = blockRegex.exec(sectionsBody)) !== null) {
+    const targetSection = match[1].trim();
+    const sectionTitle = match[2].trim();
+    const anchor = match[3].trim();
+    const content = match[4].trim();
+    if (content) {
+      sectionsRaw.push({ targetSection, title: sectionTitle, anchor, content });
+    }
+  }
+
+  // 파싱 실패 시 폴백
+  if (sectionsRaw.length === 0) {
+    const fallback = sectionsBody.replace(/---END---/g, '').trim();
+    if (fallback) {
+      sectionsRaw.push({ targetSection: 'NEW', title: '새 내용', anchor: 'new-' + Date.now(), content: fallback });
+    }
+  }
+
+  return { title, tags, sectionsRaw };
 }
 
 // ─────────────────────────────────────────
