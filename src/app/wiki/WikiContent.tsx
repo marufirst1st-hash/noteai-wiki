@@ -32,23 +32,96 @@ function toAnchor(text: string): string {
   const custom = text.match(/\{#([^}]+)\}/)?.[1];
   if (custom) return custom;
   return text
-    .toLowerCase()
     .replace(/\{#[^}]+\}/g, '')
     .trim()
+    .toLowerCase()
+    // 한글, 영문, 숫자, 하이픈만 남기고 공백은 하이픈으로
     .replace(/\s+/g, '-')
-    .replace(/[^\w가-힣-]/g, '')
-    .slice(0, 60);
+    .replace(/[^\w가-힣-]/g, '-')  // 특수문자(—, /, & 등) → 하이픈
+    .replace(/-+/g, '-')           // 연속 하이픈 제거
+    .replace(/^-|-$/g, '')         // 앞뒤 하이픈 제거
+    .slice(0, 80);
 }
 
 function cleanText(text: string): string {
   return text.replace(/\{#[^}]+\}/g, '').trim();
 }
 
+// 앵커 정규화 — 연속 하이픈 유지 (커스텀 앵커와 일치 위해)
+function normalizeAnchor(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w가-힣-]/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+// 연속 하이픈 제거 버전 (느슨한 매칭용)
+function collapseHyphens(s: string): string {
+  return s.replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+// 하이픈 완전 제거 버전 (숫자+기호 케이스용: 2024~2025 → 20242025)
+function stripHyphens(s: string): string {
+  return s.replace(/-/g, '');
+}
+
 function scrollToAnchor(anchor: string) {
-  const el = document.getElementById(anchor);
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const decoded = decodeURIComponent(anchor);
+
+  // 1차: 정확한 id 매칭
+  let el = document.getElementById(decoded);
+
+  // 2차: normalizeAnchor (연속 하이픈 유지)
+  if (!el) el = document.getElementById(normalizeAnchor(decoded));
+
+  // 3차: collapseHyphens (연속 하이픈 → 단일)
+  if (!el) el = document.getElementById(collapseHyphens(decoded));
+
+  // 4차: 모든 헤딩 순회 — 정확 id/텍스트 매칭
+  if (!el) {
+    const headings = Array.from(document.querySelectorAll('h1[id], h2[id], h3[id]')) as HTMLElement[];
+    const searchNorm = normalizeAnchor(decoded);
+    const searchCollapsed = collapseHyphens(searchNorm);
+    const searchStripped = stripHyphens(searchCollapsed);
+
+    // 4-1: collapseHyphens(헤딩 id) === collapseHyphens(링크)
+    let found = headings.find(h => collapseHyphens(normalizeAnchor(h.id)) === searchCollapsed);
+    // 4-2: 하이픈 제거 후 비교 (2024~2025 케이스)
+    if (!found) found = headings.find(h => stripHyphens(normalizeAnchor(h.id)) === searchStripped);
+    // 4-3: 헤딩 텍스트 기반
+    if (!found) found = headings.find(h => collapseHyphens(normalizeAnchor(h.textContent || '')) === searchCollapsed);
+    // 4-4: fuzzy — 유사도 0.6 이상
+    if (!found) {
+      let bestScore = 0;
+      headings.forEach(h => {
+        const score = Math.max(
+          similarity(searchCollapsed, collapseHyphens(normalizeAnchor(h.id))),
+          similarity(searchCollapsed, collapseHyphens(normalizeAnchor(h.textContent || '')))
+        );
+        if (score > bestScore) { bestScore = score; found = h; }
+      });
+      if (bestScore < 0.6) found = undefined;
+    }
+    if (found) el = found;
   }
+
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// 두 문자열의 유사도 (공통 문자 비율)
+function similarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const shorter = a.length < b.length ? a : b;
+  const longer = a.length < b.length ? b : a;
+  if (longer.includes(shorter)) return shorter.length / longer.length;
+  let common = 0;
+  for (const ch of shorter) {
+    if (longer.includes(ch)) common++;
+  }
+  return common / longer.length;
 }
 
 export function WikiContent({ masterWiki, linkedNotes }: {

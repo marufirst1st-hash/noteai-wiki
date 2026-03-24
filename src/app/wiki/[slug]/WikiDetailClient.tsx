@@ -33,18 +33,19 @@ const noteTypeIcons: Record<string, React.ReactNode> = {
   file: <Upload className="w-4 h-4 text-orange-500" />,
 };
 
-// 헤딩 텍스트 → id 앵커 변환
-// {#custom-id} 형식이 있으면 그것을 사용, 없으면 텍스트에서 생성
+// 헤딩 텍스트 → id 앵커 변환 ({#custom} 우선 사용)
 function toAnchor(text: string): string {
   const custom = text.match(/\{#([^}]+)\}/)?.[1];
   if (custom) return custom;
   return text
-    .toLowerCase()
     .replace(/\{#[^}]+\}/g, '')
     .trim()
+    .toLowerCase()
     .replace(/\s+/g, '-')
-    .replace(/[^\w가-힣-]/g, '')
-    .slice(0, 60);
+    .replace(/[^\w가-힣-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80);
 }
 
 // 헤딩 표시 텍스트 ({#...} 제거)
@@ -52,8 +53,75 @@ function cleanText(text: string): string {
   return text.replace(/\{#[^}]+\}/g, '').trim();
 }
 
+// 앵커 정규화 — 연속 하이픈 유지 (커스텀 앵커와 일치 위해)
+function normalizeAnchor(raw: string): string {
+  return raw.trim().toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w가-힣-]/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+// 연속 하이픈 → 단일 하이픈 (느슨한 매칭용)
+function collapseHyphens(s: string): string {
+  return s.replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+// 하이픈 완전 제거 (숫자+기호 케이스: 2024~2025 → 20242025)
+function stripHyphens(s: string): string {
+  return s.replace(/-/g, '');
+}
+
+function similarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const shorter = a.length < b.length ? a : b;
+  const longer = a.length < b.length ? b : a;
+  if (longer.includes(shorter)) return shorter.length / longer.length;
+  let common = 0;
+  for (const ch of shorter) { if (longer.includes(ch)) common++; }
+  return common / longer.length;
+}
+
 function scrollTo(anchor: string) {
-  const el = document.getElementById(anchor);
+  const decoded = decodeURIComponent(anchor);
+
+  // 1차: 정확한 id 매칭
+  let el = document.getElementById(decoded);
+
+  // 2차: normalizeAnchor (연속 하이픈 유지)
+  if (!el) el = document.getElementById(normalizeAnchor(decoded));
+
+  // 3차: collapseHyphens (연속 하이픈 → 단일)
+  if (!el) el = document.getElementById(collapseHyphens(decoded));
+
+  // 4차: 모든 헤딩 순회 — 정확 + fuzzy 매칭
+  if (!el) {
+    const headings = Array.from(document.querySelectorAll('h1[id], h2[id], h3[id]')) as HTMLElement[];
+    const searchNorm = normalizeAnchor(decoded);
+    const searchCollapsed = collapseHyphens(searchNorm);
+    const searchStripped = stripHyphens(searchCollapsed);
+
+    // 4-1: collapseHyphens 후 id 비교
+    let found = headings.find(h => collapseHyphens(normalizeAnchor(h.id)) === searchCollapsed);
+    // 4-2: 하이픈 제거 후 비교 (2024~2025 케이스)
+    if (!found) found = headings.find(h => stripHyphens(normalizeAnchor(h.id)) === searchStripped);
+    // 4-3: 헤딩 텍스트 기반
+    if (!found) found = headings.find(h => collapseHyphens(normalizeAnchor(h.textContent || '')) === searchCollapsed);
+    // 4-4: fuzzy — 유사도 0.6 이상
+    if (!found) {
+      let bestScore = 0;
+      headings.forEach(h => {
+        const score = Math.max(
+          similarity(searchCollapsed, collapseHyphens(normalizeAnchor(h.id))),
+          similarity(searchCollapsed, collapseHyphens(normalizeAnchor(h.textContent || '')))
+        );
+        if (score > bestScore) { bestScore = score; found = h; }
+      });
+      if (bestScore < 0.6) found = undefined;
+    }
+    if (found) el = found;
+  }
+
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 

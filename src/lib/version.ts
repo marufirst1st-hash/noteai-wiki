@@ -1,8 +1,17 @@
 // 앱 버전 — package.json과 동기화 유지
-export const APP_VERSION = '0.9.2';
+export const APP_VERSION = '0.9.3';
 
 // 변경 이력 (최신순)
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
+  {
+    version: '0.9.3',
+    date: '2026-03-24',
+    changes: [
+      '하이퍼링크 앵커 매칭 4단계 강화 (연속하이픈·숫자기호·fuzzy)',
+      'scrollToAnchor: 2024~2025 형태 특수기호 포함 링크도 정확 매칭',
+      'WikiContent + WikiDetailClient 동일 로직 적용',
+    ],
+  },
   {
     version: '0.9.2',
     date: '2026-03-24',
