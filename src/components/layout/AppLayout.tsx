@@ -12,6 +12,8 @@ import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import { MergeProgressBar } from '@/components/ui/MergeProgressBar';
+import { ErrorLogPanel } from '@/components/ui/ErrorLog';
+import { APP_VERSION } from '@/lib/version';
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -159,6 +161,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <LogOut className="w-5 h-5 flex-shrink-0" />
             {sidebarOpen && '로그아웃'}
           </button>
+          {/* 버전 표시 */}
+          {sidebarOpen && (
+            <p className="px-3 pt-2 text-xs text-gray-400 dark:text-gray-600 select-none">
+              v{APP_VERSION}
+            </p>
+          )}
         </div>
       </aside>
 
@@ -169,6 +177,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* 위키 합치기 플로팅 진행바 - 어디서든 표시 */}
       <MergeProgressBar />
+      {/* 전역 오류 로그 패널 */}
+      <ErrorLogPanel />
     </div>
   );
 }

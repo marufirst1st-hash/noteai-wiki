@@ -6,6 +6,7 @@ import { MergeProgress } from '@/types';
 import { X, GitMerge, CheckCircle, Loader2, AlertCircle, Sparkles, Database, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAppStore, INITIAL_STEPS } from '@/store/appStore';
+import { addError } from '@/components/ui/ErrorLog';
 
 interface Props {
   noteIds: string[];
@@ -72,8 +73,11 @@ export function MergeModal({ noteIds, onClose }: Props) {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || '위키 생성 실패');
+        const errText = await response.text();
+        addError(`merge API 오류 ${response.status}`, errText.slice(0, 400), 'MergeModal');
+        let errMsg = '위키 생성 실패';
+        try { errMsg = JSON.parse(errText)?.error || errMsg; } catch { /* ignore */ }
+        throw new Error(errMsg);
       }
 
       const reader = response.body?.getReader();
@@ -142,7 +146,10 @@ export function MergeModal({ noteIds, onClose }: Props) {
                 }
               }
 
-              if (data.error) throw new Error(data.error as string);
+              if (data.error) {
+                addError(`위키 생성 오류: ${data.error}`, undefined, 'merge SSE');
+                throw new Error(data.error as string);
+              }
             } catch (parseErr) {
               if (parseErr instanceof Error && parseErr.message !== 'Unexpected token') {
                 throw parseErr;
@@ -153,6 +160,7 @@ export function MergeModal({ noteIds, onClose }: Props) {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '오류가 발생했습니다.';
+      addError(msg, err instanceof Error ? err.stack?.slice(0, 300) : undefined, 'MergeModal');
       setMergeStatus({ isRunning: false, title: '지식 베이스 위키', noteIds, steps: INITIAL_STEPS, error: msg });
       if (isMountedRef.current) {
         setError(msg);
