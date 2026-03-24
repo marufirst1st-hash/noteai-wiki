@@ -28,9 +28,12 @@ export default async function WikiDetailPage({ params }: Props) {
 
   if (!wiki) redirect('/wiki');
 
+  // 서버에서 소유자 여부 판단 (클라이언트에서 user_id 비교 불필요)
+  const isOwner = wiki.user_id === session.user.id;
+
   return (
     <AppLayout>
-      <WikiDetailClient wiki={wiki} />
+      <WikiDetailClient wiki={wiki} isOwner={isOwner} />
     </AppLayout>
   );
 }

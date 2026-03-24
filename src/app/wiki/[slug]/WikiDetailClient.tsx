@@ -23,6 +23,7 @@ interface NoteLink {
 
 interface Props {
   wiki: WikiPage & { note_wiki_links?: NoteLink[] };
+  isOwner: boolean;
 }
 
 const noteTypeIcons: Record<string, React.ReactNode> = {
@@ -56,22 +57,12 @@ function scrollTo(anchor: string) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-export function WikiDetailClient({ wiki }: Props) {
-  const [isOwner, setIsOwner] = useState(false);
+export function WikiDetailClient({ wiki, isOwner }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeAnchor, setActiveAnchor] = useState('');
   const supabase = createClient();
   const router = useRouter();
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) return;
-      // 본인 위키이거나 관리자이면 삭제 가능
-      const isAdmin = session.user.app_metadata?.is_admin === true || session.user.app_metadata?.role === 'admin';
-      setIsOwner(isAdmin || session.user.id === wiki.user_id);
-    });
-  }, [supabase.auth, wiki.user_id]);
 
   // 스크롤 위치에 따라 활성 섹션 표시
   useEffect(() => {
