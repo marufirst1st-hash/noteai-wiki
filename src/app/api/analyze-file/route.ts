@@ -65,7 +65,7 @@ ${isExcel || isCsv ? '- 중요한 수치, 항목명, 데이터 패턴 추출\n- 
 **중요**: 파일명을 분석하는 것이 아니라 파일의 실제 내용을 분석하세요.`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -22,14 +22,14 @@ export async function POST(req: NextRequest) {
 
     if (!contentText) return NextResponse.json({ error: '내용 없음' }, { status: 400 });
 
-    // Gemini text-embedding-004
+    // Gemini gemini-embedding-001
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${GEMINI_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'models/text-embedding-004',
+          model: 'models/gemini-embedding-001',
           content: { parts: [{ text: contentText.slice(0, 2000) }] },
         }),
       }

@@ -6,8 +6,8 @@ const GEMINI_KEY = () => process.env.GEMINI_API_KEY!;
 // 마스터 위키 고정 slug (사용자 1명 = 위키 1개)
 const MASTER_SLUG = 'master-wiki';
 
-// 빠른 모델: gemini-2.0-flash (thinking 없음, 2~3배 빠름)
-const FAST_MODEL = 'gemini-2.0-flash';
+// 모델: gemini-2.5-flash-lite (멀티모달 지원, 무료 티어 정상)
+const FAST_MODEL = 'gemini-2.5-flash-lite';
 
 // SSE 헬퍼
 function sseData(data: Record<string, unknown>): string {
