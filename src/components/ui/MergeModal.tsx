@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { MergeProgress } from '@/types';
-import { X, GitMerge, CheckCircle, Loader2, AlertCircle, Sparkles, Database, RefreshCw } from 'lucide-react';
+import { X, CheckCircle, Loader2, AlertCircle, Database, RefreshCw, BookOpen, Layers, GitMerge } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAppStore, INITIAL_STEPS } from '@/store/appStore';
 import { addError } from '@/components/ui/ErrorLog';
@@ -13,14 +13,26 @@ interface Props {
   onClose: () => void;
 }
 
-// 단계 라벨 (마스터 위키 통합용)
-const MERGE_STEPS = [
-  { step: 1, label: '메모 내용 분석 (이미지 포함)' },
-  { step: 2, label: '키워드 & 개념 추출' },
-  { step: 3, label: '위키에 통합' },
-  { step: 4, label: '저장' },
-  { step: 5, label: '검색 인덱스 업데이트' },
+// 새 파이프라인 단계
+const PIPELINE_STEPS = [
+  { step: 1, label: '메모 준비', desc: '선택한 메모 내용 추출 및 위키화 형식 확인', icon: BookOpen },
+  { step: 2, label: '중복 확인', desc: '통합 위키와 중복 내용 분석', icon: Layers },
+  { step: 3, label: '섹션별 통합', desc: '관련 섹션에 내용 추가 또는 새 섹션 생성', icon: GitMerge },
+  { step: 4, label: '저장', desc: 'DB에 위키 저장', icon: Database },
+  { step: 5, label: '검색 인덱스', desc: '검색 인덱스 갱신', icon: RefreshCw },
 ];
+
+type StepStatus = 'waiting' | 'processing' | 'done' | 'error';
+
+interface StepState {
+  step: number;
+  label: string;
+  desc: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  icon: any;
+  status: StepStatus;
+  message?: string;
+}
 
 export function MergeModal({ noteIds, onClose }: Props) {
   const router = useRouter();
@@ -32,13 +44,12 @@ export function MergeModal({ noteIds, onClose }: Props) {
   const [totalNotes, setTotalNotes] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
-  const [currentStepMessage, setCurrentStepMessage] = useState('');
-  const [stepExtraData, setStepExtraData] = useState<Record<number, string>>({});
-  const [steps, setSteps] = useState(MERGE_STEPS.map(s => ({ ...s, status: 'waiting' as MergeProgress['status'] })));
+  const [steps, setSteps] = useState<StepState[]>(
+    PIPELINE_STEPS.map(s => ({ ...s, status: 'waiting' }))
+  );
 
   const isMountedRef = useRef(true);
 
-  // 마운트 즉시 자동 시작
   useEffect(() => {
     isMountedRef.current = true;
     handleMerge();
@@ -46,27 +57,29 @@ export function MergeModal({ noteIds, onClose }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const updateStep = (stepNum: number, status: MergeProgress['status']) => {
-    setSteps(prev => prev.map(s => s.step === stepNum ? { ...s, status } : s));
-    updateMergeStatusStep(stepNum, status);
+  const updateStep = (stepNum: number, status: StepStatus, message?: string) => {
+    setSteps(prev => prev.map(s => s.step === stepNum ? { ...s, status, message } : s));
+    updateMergeStatusStep(stepNum, status as MergeProgress['status']);
   };
 
   const handleMerge = async () => {
     if (isProcessing) return;
     setIsProcessing(true);
     setError('');
+    setSteps(PIPELINE_STEPS.map(s => ({ ...s, status: 'waiting' })));
 
     setMergeStatus({
       isRunning: true,
-      title: '지식 베이스 위키',
+      title: '지식 베이스 통합',
       noteIds,
       steps: INITIAL_STEPS.map(s => ({ ...s })),
     });
 
     try {
-      updateStep(1, 'processing');
+      updateStep(1, 'processing', '메모 데이터 준비 중...');
 
-      const response = await fetch('/api/merge', {
+      // 새 API 엔드포인트 사용
+      const response = await fetch('/api/wiki/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ noteIds }),
@@ -74,8 +87,8 @@ export function MergeModal({ noteIds, onClose }: Props) {
 
       if (!response.ok) {
         const errText = await response.text();
-        addError(`merge API 오류 ${response.status}`, errText.slice(0, 400), 'MergeModal');
-        let errMsg = '위키 생성 실패';
+        addError(`wiki/merge API 오류 ${response.status}`, errText.slice(0, 400), 'MergeModal');
+        let errMsg = '위키 병합 실패';
         try { errMsg = JSON.parse(errText)?.error || errMsg; } catch { /* ignore */ }
         throw new Error(errMsg);
       }
@@ -96,23 +109,14 @@ export function MergeModal({ noteIds, onClose }: Props) {
               const data = JSON.parse(line.slice(6));
 
               if (data.step) {
-                updateStep(data.step, data.status);
-                if (data.message && data.status === 'processing') {
-                  setCurrentStepMessage(data.message as string);
-                }
-                if (data.data && data.status === 'done') {
-                  const d = data.data as Record<string, unknown>;
-                  let extra = '';
-                  if (d.keywords) extra = (d.keywords as string[]).join(', ');
-                  if (extra) setStepExtraData(prev => ({ ...prev, [data.step as number]: extra }));
-                }
+                updateStep(data.step, data.status as StepStatus, data.message as string);
               }
 
               if (data.done) {
                 addWikifiedNotes(noteIds);
                 setMergeStatus({
                   isRunning: false,
-                  title: '지식 베이스 위키',
+                  title: '지식 베이스 통합',
                   noteIds,
                   steps: INITIAL_STEPS.map(s => ({ ...s, status: 'done' as const })),
                   completedAt: Date.now(),
@@ -127,33 +131,18 @@ export function MergeModal({ noteIds, onClose }: Props) {
                   setIsProcessing(false);
                 } else {
                   const msg = data.isUpdate
-                    ? `위키 v${data.version}으로 업데이트! (총 ${data.totalNotes}개 메모 반영)`
-                    : `위키 첫 생성 완료! (${data.totalNotes}개 메모)`;
-                  toast.success(
-                    (t) => (
-                      <div className="flex flex-col gap-1">
-                        <span className="font-semibold">🎉 {msg}</span>
-                        <button
-                          className="text-sm text-blue-600 underline text-left mt-1"
-                          onClick={() => { toast.dismiss(t.id); router.push('/wiki/master-wiki'); }}
-                        >
-                          위키 보러 가기 →
-                        </button>
-                      </div>
-                    ),
-                    { duration: 10000 }
-                  );
+                    ? `위키 v${data.version} 업데이트 완료! (총 ${data.totalNotes}개 메모)`
+                    : `위키 생성 완료! (${data.totalNotes}개 메모)`;
+                  toast.success(msg, { duration: 8000 });
                 }
               }
 
               if (data.error) {
-                addError(`위키 생성 오류: ${data.error}`, undefined, 'merge SSE');
+                addError(`위키 병합 오류: ${data.error}`, undefined, 'wiki/merge SSE');
                 throw new Error(data.error as string);
               }
             } catch (parseErr) {
-              if (parseErr instanceof Error && parseErr.message !== 'Unexpected token') {
-                throw parseErr;
-              }
+              if (parseErr instanceof Error && !parseErr.message.includes('JSON')) throw parseErr;
             }
           }
         }
@@ -161,19 +150,21 @@ export function MergeModal({ noteIds, onClose }: Props) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '오류가 발생했습니다.';
       addError(msg, err instanceof Error ? err.stack?.slice(0, 300) : undefined, 'MergeModal');
-      setMergeStatus({ isRunning: false, title: '지식 베이스 위키', noteIds, steps: INITIAL_STEPS, error: msg });
+      setMergeStatus({ isRunning: false, title: '지식 베이스 통합', noteIds, steps: INITIAL_STEPS, error: msg });
       if (isMountedRef.current) {
         setError(msg);
         setIsProcessing(false);
+        // 실패한 단계 error 상태로
+        setSteps(prev => prev.map(s => s.status === 'processing' ? { ...s, status: 'error' } : s));
       } else {
-        toast.error(`위키 업데이트 실패: ${msg}`);
+        toast.error(`위키 병합 실패: ${msg}`);
       }
     }
   };
 
   const handleClose = () => {
     if (isProcessing) {
-      toast('위키 업데이트가 백그라운드에서 계속 진행됩니다.', { icon: '⚙️', duration: 3000 });
+      toast('위키 병합이 백그라운드에서 계속 진행됩니다.', { icon: '⚙️', duration: 3000 });
     }
     onClose();
   };
@@ -191,8 +182,8 @@ export function MergeModal({ noteIds, onClose }: Props) {
               <Database className="w-5 h-5 text-indigo-600" />
             </div>
             <div>
-              <h2 className="font-bold text-gray-900 dark:text-white">지식 베이스 업데이트</h2>
-              <p className="text-xs text-gray-500">{noteIds.length}개 메모 → 마스터 위키에 통합</p>
+              <h2 className="font-bold text-gray-900 dark:text-white">통합 위키 병합</h2>
+              <p className="text-xs text-gray-500">{noteIds.length}개 메모 → 중복 확인 후 섹션별 통합</p>
             </div>
           </div>
           <button
@@ -205,31 +196,29 @@ export function MergeModal({ noteIds, onClose }: Props) {
         </div>
 
         <div className="p-6">
-          {/* 완료 */}
           {done ? (
+            /* ── 완료 화면 ── */
             <div className="text-center py-4">
               <div className="w-16 h-16 bg-green-100 dark:bg-green-950 rounded-full flex items-center justify-center mx-auto mb-4">
                 <CheckCircle className="w-8 h-8 text-green-600" />
               </div>
               <h3 className="font-bold text-gray-900 dark:text-white mb-2">
-                {isUpdate ? `위키 v${wikiVersion}으로 업데이트 완료!` : '위키 첫 생성 완료!'}
+                {isUpdate ? `위키 v${wikiVersion} 업데이트 완료!` : '위키 첫 생성 완료!'}
               </h3>
-              <p className="text-sm text-gray-500 mb-2">
-                총 <span className="font-semibold text-indigo-600">{totalNotes}개</span> 메모가 반영된 지식 베이스가 구축됐습니다.
+              <p className="text-sm text-gray-500 mb-1">
+                총 <span className="font-semibold text-indigo-600">{totalNotes}개</span> 메모 반영
               </p>
               <p className="text-xs text-gray-400 mb-6">
-                {isUpdate ? '새 메모가 기존 위키에 자연스럽게 통합됐습니다.' : '앞으로 메모를 추가할수록 위키가 풍부해집니다.'}
+                중복 내용은 제외하고 새 정보만 해당 섹션에 추가했습니다.
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => { router.push('/wiki/master-wiki'); onClose(); }}
+                  onClick={() => { router.push('/wiki'); onClose(); }}
                   className="btn-primary flex-1 py-2.5"
                 >
                   위키 보기
                 </button>
-                <button onClick={onClose} className="btn-secondary flex-1 py-2.5">
-                  닫기
-                </button>
+                <button onClick={onClose} className="btn-secondary flex-1 py-2.5">닫기</button>
               </div>
             </div>
           ) : (
@@ -240,7 +229,7 @@ export function MergeModal({ noteIds, onClose }: Props) {
                   <RefreshCw className="w-3.5 h-3.5 flex-shrink-0 animate-spin" />
                   <span>
                     {isProcessing
-                      ? 'AI가 메모를 분석해 마스터 위키에 통합하고 있습니다...'
+                      ? '중복을 확인하며 섹션별로 통합하고 있습니다...'
                       : '잠시 후 자동으로 시작됩니다.'}
                   </span>
                 </div>
@@ -253,11 +242,11 @@ export function MergeModal({ noteIds, onClose }: Props) {
                   <div>
                     <p className="font-medium mb-1">오류 발생</p>
                     <p className="text-xs whitespace-pre-line">{error}</p>
-                    {error.includes('할당량') || error.includes('429') ? (
+                    {(error.includes('할당량') || error.includes('429')) && (
                       <p className="text-xs text-amber-600 mt-1.5 font-medium">
-                        💡 Gemini API 무료 플랜은 분당 요청 한도가 있습니다. 잠시 후 다시 시도해주세요.
+                        💡 Gemini API 무료 플랜 한도 초과. 잠시 후 재시도해주세요.
                       </p>
-                    ) : null}
+                    )}
                     <button
                       onClick={handleMerge}
                       disabled={isProcessing}
@@ -283,57 +272,58 @@ export function MergeModal({ noteIds, onClose }: Props) {
                 </div>
               </div>
 
-              {/* 백그라운드 안내 */}
-              {isProcessing && (
-                <div className="flex items-center gap-2 text-xs text-gray-500 bg-blue-50 dark:bg-blue-950/50 rounded-lg px-3 py-2 mb-4">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
-                  <span>X를 눌러 닫아도 백그라운드에서 계속 진행되며, 완료 시 알림이 표시됩니다</span>
-                </div>
-              )}
-
               {/* 단계 목록 */}
               <div className="space-y-2">
-                {steps.map(step => (
-                  <div
-                    key={step.step}
-                    className={`flex items-start gap-3 p-2.5 rounded-lg transition-all ${
-                      step.status === 'processing'
-                        ? 'bg-indigo-50 dark:bg-indigo-950 border border-indigo-200 dark:border-indigo-800'
-                        : step.status === 'done'
-                        ? 'bg-green-50 dark:bg-green-950/50'
-                        : 'bg-gray-50 dark:bg-gray-800/50'
-                    }`}
-                  >
-                    <div className="flex-shrink-0 w-5 h-5 mt-0.5">
-                      {step.status === 'done' && <CheckCircle className="w-5 h-5 text-green-500" />}
-                      {step.status === 'processing' && <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />}
-                      {(step.status === 'waiting' || !step.status) && (
-                        <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 flex items-center justify-center">
-                          <span className="text-[10px] text-gray-400">{step.step}</span>
-                        </div>
-                      )}
-                      {step.status === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span className={`text-sm block ${
+                {steps.map(step => {
+                  const Icon = step.icon;
+                  return (
+                    <div
+                      key={step.step}
+                      className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
                         step.status === 'processing'
-                          ? 'font-medium text-indigo-700 dark:text-indigo-300'
+                          ? 'bg-indigo-50 dark:bg-indigo-950 border border-indigo-200 dark:border-indigo-800'
                           : step.status === 'done'
-                          ? 'text-green-700 dark:text-green-400 line-through opacity-70'
+                          ? 'bg-green-50 dark:bg-green-950/50'
+                          : step.status === 'error'
+                          ? 'bg-red-50 dark:bg-red-950/50'
+                          : 'bg-gray-50 dark:bg-gray-800/50'
+                      }`}
+                    >
+                      <div className="flex-shrink-0 w-5 h-5 mt-0.5">
+                        {step.status === 'done' && <CheckCircle className="w-5 h-5 text-green-500" />}
+                        {step.status === 'processing' && <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />}
+                        {step.status === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
+                        {step.status === 'waiting' && (
+                          <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                            <Icon className="w-2.5 h-2.5 text-gray-400" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-sm font-medium block ${
+                          step.status === 'processing' ? 'text-indigo-700 dark:text-indigo-300'
+                          : step.status === 'done' ? 'text-green-700 dark:text-green-400'
+                          : step.status === 'error' ? 'text-red-600'
                           : 'text-gray-400 dark:text-gray-500'
-                      }`}>
-                        {step.label}
-                      </span>
-                      {step.status === 'processing' && currentStepMessage && (
-                        <span className="text-xs text-indigo-500 mt-0.5 block">→ {currentStepMessage}</span>
-                      )}
-                      {step.status === 'done' && stepExtraData[step.step] && (
-                        <span className="text-xs text-gray-400 mt-0.5 block truncate">{stepExtraData[step.step]}</span>
-                      )}
+                        }`}>
+                          {step.label}
+                        </span>
+                        <span className="text-xs text-gray-400 block">
+                          {step.status === 'processing' && step.message
+                            ? `→ ${step.message}`
+                            : step.desc}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+
+              {isProcessing && (
+                <p className="text-xs text-gray-400 text-center mt-3">
+                  X를 눌러 닫아도 백그라운드에서 계속 진행됩니다
+                </p>
+              )}
             </>
           )}
         </div>

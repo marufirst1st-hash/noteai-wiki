@@ -1,11 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { Globe, BookOpen, Database, Clock, GitMerge } from 'lucide-react';
+import { Globe, BookOpen, Database, Clock, GitMerge, Wand2, Loader2, CheckCircle } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { WikiDeleteButton } from '@/components/ui/WikiDeleteButton';
+import toast from 'react-hot-toast';
 
 interface NoteLink {
   note_id: string;
@@ -128,6 +130,42 @@ export function WikiContent({ masterWiki, linkedNotes }: {
   masterWiki: MasterWiki;
   linkedNotes: NoteLink[];
 }) {
+  const [consolidating, setConsolidating] = useState(false);
+  const [consolidated, setConsolidated] = useState(false);
+
+  // 3단계: 통합 위키 재정비
+  const handleConsolidate = async () => {
+    if (!confirm('AI가 통합 위키를 정리합니다.\n중복 내용 제거, 목차 재정비, 섹션 흐름 개선을 진행합니다.\n\n진행할까요?')) return;
+    setConsolidating(true);
+    const toastId = toast.loading('위키 정리 중...');
+    try {
+      const res = await fetch('/api/wiki/consolidate', { method: 'POST' });
+      const reader = res.body?.getReader();
+      const dec = new TextDecoder();
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = dec.decode(value);
+          for (const line of chunk.split('\n').filter(l => l.startsWith('data: '))) {
+            try {
+              const d = JSON.parse(line.slice(6));
+              if (d.done) {
+                toast.success(`위키 v${d.version} 정리 완료!`, { id: toastId });
+                setConsolidated(true);
+                setTimeout(() => window.location.reload(), 1500);
+              }
+              if (d.error) throw new Error(d.error);
+            } catch { /* ignore json parse */ }
+          }
+        }
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '정리 실패', { id: toastId });
+    } finally {
+      setConsolidating(false);
+    }
+  };
   // 마크다운에서 헤딩 추출 → TOC
   const headers = masterWiki.content.match(/^#{1,3} .+/gm) || [];
   const toc = headers.map((h) => {
@@ -256,17 +294,33 @@ export function WikiContent({ masterWiki, linkedNotes }: {
       {/* 오른쪽: 위키 본문 */}
       <div className="lg:col-span-3">
         <div className="card p-8">
-          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100 dark:border-gray-800">
-            <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-950 rounded-lg flex items-center justify-center">
-              <Database className="w-4 h-4 text-indigo-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{masterWiki.title}</h2>
-              <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
-                <Clock className="w-3 h-3" />
-                <span>v{masterWiki.version} · {formatRelativeTime(masterWiki.updated_at)} 업데이트</span>
+          <div className="flex items-start justify-between gap-3 mb-6 pb-4 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-950 rounded-lg flex items-center justify-center">
+                <Database className="w-4 h-4 text-indigo-600" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">{masterWiki.title}</h2>
+                <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
+                  <Clock className="w-3 h-3" />
+                  <span>v{masterWiki.version} · {formatRelativeTime(masterWiki.updated_at)} 업데이트</span>
+                </div>
               </div>
             </div>
+            {/* 3단계: 위키 재정비 버튼 */}
+            <button
+              onClick={handleConsolidate}
+              disabled={consolidating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-purple-300 text-purple-700 hover:bg-purple-50 dark:hover:bg-purple-950 disabled:opacity-50 transition-colors flex-shrink-0"
+              title="중복 제거, 목차 재정비, 섹션 흐름 개선"
+            >
+              {consolidating
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : consolidated
+                ? <CheckCircle className="w-3.5 h-3.5" />
+                : <Wand2 className="w-3.5 h-3.5" />}
+              {consolidating ? '정리 중...' : consolidated ? '정리 완료' : 'AI 재정비'}
+            </button>
           </div>
 
           {/* 마크다운 본문 — 앵커 + 하이퍼링크 완전 처리 */}

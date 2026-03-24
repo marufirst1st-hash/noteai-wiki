@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Note } from '@/types';
 import { formatRelativeTime } from '@/lib/utils';
-import { ArrowLeft, Edit, Trash2, Tag, Clock, FileText, Network, Image, Upload } from 'lucide-react';
+import { ArrowLeft, Edit, Trash2, Tag, Clock, FileText, Network, Image, Upload, Sparkles, BookOpen, CheckCircle, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -38,6 +38,14 @@ export function NoteDetailClient({ note, userId }: Props) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+
+  // 1-1가: 메모 정리
+  const [refining, setRefining] = useState(false);
+  const [refined, setRefined] = useState(false);
+  // 1-2: 위키화
+  const [wikifying, setWikifying] = useState(false);
+  const [wikified, setWikified] = useState(false);
+
   const supabase = createClient();
 
   useEffect(() => {
@@ -58,6 +66,48 @@ export function NoteDetailClient({ note, userId }: Props) {
     } catch {
       toast.error('삭제에 실패했습니다.');
       setDeleting(false);
+    }
+  };
+
+  // 1-1가: AI 메모 정리
+  const handleRefine = async () => {
+    if (!confirm('AI가 메모 내용을 정리합니다.\n중복 제거, 오타 수정, 구조화를 진행합니다.\n원문 정보는 보존됩니다.')) return;
+    setRefining(true);
+    try {
+      const res = await fetch('/api/note/refine', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteId: note.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '정리 실패');
+      toast.success('메모가 정리되었습니다!');
+      setRefined(true);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '정리 실패');
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  // 1-2: 위키화
+  const handleWikify = async () => {
+    setWikifying(true);
+    try {
+      const res = await fetch('/api/wikify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteId: note.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '위키화 실패');
+      toast.success('위키 형식으로 변환 완료!');
+      setWikified(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '위키화 실패');
+    } finally {
+      setWikifying(false);
     }
   };
 
@@ -98,6 +148,37 @@ export function NoteDetailClient({ note, userId }: Props) {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1" />
+
+        {/* 1-1가: 메모 정리 버튼 */}
+        <button
+          onClick={handleRefine}
+          disabled={refining}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-amber-300 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950 disabled:opacity-50 transition-colors"
+          title="AI가 중복 제거, 오타 수정, 구조화 정리"
+        >
+          {refining ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+          {refining ? '정리 중...' : refined ? '다시 정리' : 'AI 정리'}
+        </button>
+
+        {/* 1-2: 위키화 버튼 */}
+        <button
+          onClick={handleWikify}
+          disabled={wikifying}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+            wikified
+              ? 'border border-green-300 text-green-700 hover:bg-green-50 dark:hover:bg-green-950'
+              : 'border border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950'
+          }`}
+          title={wikified ? '이미 위키화됨. 다시 변환하려면 클릭' : '메모를 위키 목차+섹션 형식으로 변환'}
+        >
+          {wikifying
+            ? <Loader2 className="w-4 h-4 animate-spin" />
+            : wikified
+            ? <CheckCircle className="w-4 h-4" />
+            : <BookOpen className="w-4 h-4" />}
+          {wikifying ? '위키화 중...' : wikified ? '위키화 완료' : '위키화'}
+        </button>
+
         {isAdmin && (
           <>
             <button
