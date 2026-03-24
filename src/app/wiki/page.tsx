@@ -2,10 +2,11 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import Link from 'next/link';
-import { Globe, BookOpen, Database, FileText, Network, Image, Upload, Clock, GitMerge } from 'lucide-react';
+import { Globe, BookOpen, Database, FileText, Network, Image, Upload, Clock, GitMerge, Trash2 } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { WikiDeleteButton } from '@/components/ui/WikiDeleteButton';
 
 export default async function WikiListPage() {
   const supabase = await createClient();
@@ -50,10 +51,13 @@ export default async function WikiListPage() {
             </div>
           </div>
           {masterWiki && (
-            <Link href="/dashboard" className="btn-secondary flex items-center gap-2 text-sm">
-              <GitMerge className="w-4 h-4" />
-              메모 추가하기
-            </Link>
+            <div className="flex items-center gap-2">
+              <WikiDeleteButton wikiId={masterWiki.id} />
+              <Link href="/dashboard" className="btn-secondary flex items-center gap-2 text-sm">
+                <GitMerge className="w-4 h-4" />
+                메모 추가하기
+              </Link>
+            </div>
           )}
         </div>
 
