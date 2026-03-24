@@ -7,13 +7,16 @@ export const CHANGELOG: { version: string; date: string; changes: string[] }[] =
     version: '0.9.2',
     date: '2026-03-24',
     changes: [
-      '/wiki 하이퍼링크 클릭 스크롤 수정 (코드 분리)',
-      'h1/h2/h3 아이디 앱커 자동 부여',
+      '/wiki 하이퍼링크 클릭 스크롤 수정 (WikiContent 클라이언트 컴포넌트 분리)',
+      'h1/h2/h3 id 앵커 자동 부여',
       '좌측 사이드바에 TOC(목차) 버튼 추가',
     ],
   },
+  {
+    version: '0.9.1',
+    date: '2026-03-24',
     changes: [
-      '위키 목록(/wiki) 페이지에 삭제 버튼 추가',
+      '/wiki 목록 페이지에 위키 삭제 버튼 추가',
       '위키 삭제 버튼 미표시 버그 수정 (isOwner RLS 문제)',
       '버전 표시 + 오류 로그 패널 추가',
     ],
