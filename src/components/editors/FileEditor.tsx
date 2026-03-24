@@ -29,22 +29,19 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
   const [fileSize, setFileSize] = useState(0);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [parseError, setParseError] = useState('');
-  const [analysis, setAnalysis] = useState('');
   const [parsing, setParsing] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [showRawContent, setShowRawContent] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // ── 파일 업로드 & 파싱 ──────────────────────────────────
+  // ── 파일 업로드 & 파싱 (텍스트 추출만) ─────────────────
   const handleFileChange = async (file: File) => {
     setFileName(file.name);
     setFileSize(file.size);
     setParseResult(null);
     setParseError('');
-    setAnalysis('');
 
     if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ''));
 
@@ -58,7 +55,6 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
 
     setParsing(true);
     try {
-      // 서버사이드 파싱 API 호출 (PDF/Excel 실제 텍스트 추출)
       const formData = new FormData();
       formData.append('file', file);
 
@@ -75,9 +71,7 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
       }
 
       setParseResult(data as ParseResult);
-
-      // 파싱 성공 → AI 분석 시작
-      await analyzeContent(data.text, file.name, data);
+      toast.success('파일 내용을 성공적으로 추출했습니다.');
     } catch (err) {
       setParseError('파일 업로드 중 오류가 발생했습니다.');
       console.error('파일 파싱 오류:', err);
@@ -86,75 +80,16 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
     }
   };
 
-  // ── AI 분석 ──────────────────────────────────────────────
-  const analyzeContent = async (text: string, fname: string, parsed: ParseResult) => {
-    if (!text?.trim() || text.trim().length < 20) {
-      setAnalysis(`## 파일 분석 결과\n\n**파일명**: ${fname}\n\n추출된 텍스트가 너무 짧습니다.`);
-      return;
-    }
-
-    setAnalyzing(true);
-    try {
-      // AI 분석에는 앞 5000자만 전송 (토큰 절약)
-      const contentForAI = text.slice(0, 5000);
-
-      const res = await fetch('/api/analyze-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: contentForAI, fileName: fname }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setAnalysis(data.analysis || '');
-      } else {
-        // API 실패 시 기본 분석
-        setAnalysis(buildFallbackAnalysis(fname, parsed));
-      }
-    } catch {
-      setAnalysis(buildFallbackAnalysis(fname, parsed));
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
-  // 폴백 분석 (AI 실패 시)
-  const buildFallbackAnalysis = (fname: string, parsed: ParseResult): string => {
-    let meta = `## 파일 분석 결과\n\n**파일명**: ${fname}\n**문자 수**: ${parsed.charCount.toLocaleString()}자\n`;
-    if (parsed.pageCount) meta += `**페이지 수**: ${parsed.pageCount}페이지\n`;
-    if (parsed.sheetCount) {
-      meta += `**시트 수**: ${parsed.sheetCount}개\n`;
-      parsed.sheets?.forEach((s) => {
-        meta += `  - ${s.name}: ${s.rowCount}행 × ${s.colCount}열\n`;
-      });
-    }
-    if (parsed.lineCount) meta += `**라인 수**: ${parsed.lineCount.toLocaleString()}줄\n`;
-    meta += `\n### 내용 미리보기\n\`\`\`\n${parsed.preview}\n\`\`\``;
-    return meta;
-  };
-
-  // ── 저장 ─────────────────────────────────────────────────
+  // ── 저장: 원본 텍스트 전체를 그대로 저장 ────────────────
+  // AI 분석은 여기서 하지 않음 — 위키화할 때 AI가 원본 내용을 직접 읽고 분석
   const handleSave = async () => {
     if (!title.trim()) { toast.error('제목을 입력하세요.'); return; }
     if (!parseResult) { toast.error('파일을 업로드하세요.'); return; }
 
     setSaving(true);
     try {
-      // content = AI 분석 결과 + 구분선 + 실제 원본 텍스트 전체
-      // 위키화 시 원본 데이터를 AI가 읽을 수 있도록 전체 저장
-      const rawText = parseResult.text;
-      const maxRaw = 50000; // 최대 5만자 저장 (위키화 활용)
+      const rawText = parseResult.text.slice(0, 50000);
 
-      let contentToSave = '';
-      if (analysis) {
-        contentToSave = analysis;
-        // 원본 데이터도 함께 저장 (위키화 시 참조용)
-        contentToSave += `\n\n---\n## 원본 데이터\n\`\`\`\n${rawText.slice(0, maxRaw)}\n\`\`\``;
-      } else {
-        contentToSave = rawText.slice(0, maxRaw);
-      }
-
-      // 파일 메타 정보
       const metadata: Record<string, unknown> = {
         fileName,
         fileSize,
@@ -167,7 +102,7 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
 
       const payload = {
         title: title.trim(),
-        content: contentToSave,
+        content: rawText,
         note_type: 'file',
         tags,
         metadata,
@@ -180,7 +115,7 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
       });
       if (!res.ok) throw new Error('저장 실패');
       const data = await res.json();
-      toast.success('파일 메모가 저장되었습니다!');
+      toast.success('파일이 저장되었습니다. 위키화 시 AI가 내용을 자동 분석합니다.');
       onSave(data.id);
     } catch {
       toast.error('저장에 실패했습니다.');
@@ -202,7 +137,10 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
     return <File className="w-8 h-8 text-blue-600" />;
   };
 
-  const isReady = !!parseResult && !parsing && !analyzing;
+  const isReady = !!parseResult && !parsing;
+
+  // userId, noteId 사용 억제 (향후 확장용)
+  void userId; void noteId;
 
   return (
     <div className="flex flex-col h-full">
@@ -276,11 +214,14 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
               <p className="text-sm text-gray-500 mt-0.5">{(fileSize / 1024).toFixed(1)} KB</p>
               {parsing && <p className="text-sm text-primary-600 mt-1 animate-pulse">📄 파일 내용 추출 중...</p>}
               {parseResult && !parsing && (
-                <p className="text-sm text-green-600 dark:text-green-400 mt-1">
-                  ✓ 추출 완료 · {parseResult.charCount.toLocaleString()}자
-                  {parseResult.pageCount && ` · ${parseResult.pageCount}페이지`}
-                  {parseResult.sheetCount && ` · ${parseResult.sheetCount}시트`}
-                </p>
+                <div className="mt-1 space-y-0.5">
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    ✓ 추출 완료 · {parseResult.charCount.toLocaleString()}자
+                    {parseResult.pageCount && ` · ${parseResult.pageCount}페이지`}
+                    {parseResult.sheetCount && ` · ${parseResult.sheetCount}시트`}
+                  </p>
+                  <p className="text-xs text-gray-400">저장 후 &quot;지식 베이스에 추가&quot; 시 AI가 내용을 분석합니다</p>
+                </div>
               )}
               {parseError && <p className="text-sm text-red-600 mt-1">⚠ {parseError}</p>}
             </div>
@@ -288,7 +229,7 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
             <div className="text-center">
               <p className="font-semibold text-gray-900 dark:text-white">파일 업로드</p>
               <p className="text-sm text-gray-500 mt-1">PDF, Excel, CSV, TXT 지원 (최대 20MB)</p>
-              <p className="text-xs text-gray-400 mt-1">실제 파일 내용을 추출하여 AI가 분석합니다</p>
+              <p className="text-xs text-gray-400 mt-1">파일 내용 전체를 추출하여 저장합니다</p>
             </div>
           )}
 
@@ -301,33 +242,7 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
           />
         </label>
 
-        {/* ── AI 분석 중 ── */}
-        {analyzing && (
-          <div className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-950 rounded-xl">
-            <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-blue-700 dark:text-blue-300">AI 분석 중...</p>
-              <p className="text-xs text-blue-500 mt-0.5">Gemini가 파일 내용을 분석하고 있습니다</p>
-            </div>
-          </div>
-        )}
-
-        {/* ── AI 분석 결과 ── */}
-        {analysis && (
-          <div>
-            <h3 className="text-base font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
-              <span className="w-6 h-6 bg-blue-100 dark:bg-blue-950 rounded flex items-center justify-center">
-                <FileText className="w-3.5 h-3.5 text-blue-600" />
-              </span>
-              AI 분석 결과
-            </h3>
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-xl p-4 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-              {analysis}
-            </div>
-          </div>
-        )}
-
-        {/* ── 원본 데이터 미리보기 (토글) ── */}
+        {/* ── 추출된 내용 미리보기 ── */}
         {parseResult && (
           <div>
             <button
@@ -335,14 +250,28 @@ export function FileEditor({ userId, onBack, onSave, noteId, initialTitle = '' }
               className="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
             >
               {showRawContent ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              추출된 원본 텍스트 보기 ({parseResult.charCount.toLocaleString()}자)
+              추출된 내용 미리보기 ({parseResult.charCount.toLocaleString()}자)
             </button>
             {showRawContent && (
-              <pre className="mt-2 bg-gray-50 dark:bg-gray-900 rounded-xl p-4 text-xs text-gray-600 dark:text-gray-400 overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap">
-                {parseResult.text.slice(0, 3000)}
-                {parseResult.text.length > 3000 && `\n\n... (${(parseResult.text.length - 3000).toLocaleString()}자 더 있음)`}
+              <pre className="mt-2 bg-gray-50 dark:bg-gray-900 rounded-xl p-4 text-xs text-gray-600 dark:text-gray-400 overflow-x-auto max-h-[400px] overflow-y-auto whitespace-pre-wrap">
+                {parseResult.text.slice(0, 5000)}
+                {parseResult.text.length > 5000 && `\n\n... (${(parseResult.text.length - 5000).toLocaleString()}자 더 있음)`}
               </pre>
             )}
+          </div>
+        )}
+
+        {/* ── 안내 ── */}
+        {parseResult && (
+          <div className="flex items-start gap-3 p-4 bg-indigo-50 dark:bg-indigo-950 rounded-xl text-sm">
+            <span className="text-lg">💡</span>
+            <div className="text-indigo-700 dark:text-indigo-300">
+              <p className="font-medium">저장 후 다음 단계</p>
+              <p className="text-xs mt-1 text-indigo-500">
+                대시보드에서 이 메모를 선택 → <strong>&quot;지식 베이스에 추가&quot;</strong> 클릭<br />
+                AI가 파일 내용을 직접 읽고 분석하여 위키로 통합합니다.
+              </p>
+            </div>
           </div>
         )}
 

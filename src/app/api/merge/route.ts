@@ -152,25 +152,23 @@ async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
       } catch { content = note.content?.replace(/<[^>]+>/g, '') || ''; }
 
     } else if (note.type === 'file') {
-      const raw = note.content?.replace(/<[^>]+>/g, '') || '';
-      // "---" 구분선 기준으로 AI분석 / 원본데이터 분리
-      const parts = raw.split(/\n---\n/);
-      const aiAnalysis = parts[0]?.trim() || '';
-      // 코드블록(원본 데이터)에서 실제 텍스트 추출
-      const rawDataMatch = raw.match(/```\n?([\s\S]*?)```/);
-      const rawData = rawDataMatch?.[1]?.trim() || '';
+      // 원본 텍스트 그대로 전달 — AI가 직접 내용을 읽고 분석
+      // content_json에는 파싱된 원본 텍스트가 저장됨
+      const raw = note.content || '';
 
-      if (rawData.length > 100) {
-        // 원본 데이터가 있으면 원본 우선 (AI 설명보다 실제 내용이 중요)
-        content = rawData.slice(0, 5000);
-        if (aiAnalysis && aiAnalysis.length > 50) {
-          // AI 분석 요약도 앞에 붙임 (컨텍스트용, 짧게)
-          const shortSummary = aiAnalysis.slice(0, 500);
-          content = `[요약]\n${shortSummary}\n\n[원본 내용]\n${content}`;
-        }
-      } else {
-        // 원본 데이터 없으면 AI 분석 결과 사용
-        content = aiAnalysis.slice(0, 5000);
+      // 혹시 이전 방식(AI 분석 + 원본 코드블록)으로 저장된 메모 대응
+      const codeBlockMatch = raw.match(/```\n?([\s\S]*?)```/);
+      const rawDataFromBlock = codeBlockMatch?.[1]?.trim() || '';
+
+      // 코드블록 안에 실제 데이터가 있으면 그걸 쓰고, 없으면 전체 content를 원본으로 간주
+      const actualContent = rawDataFromBlock.length > 100 ? rawDataFromBlock : raw;
+
+      // HTML 태그 제거
+      content = actualContent.replace(/<[^>]+>/g, '').trim();
+
+      // 파일 내용임을 명시해서 AI가 맥락을 알도록
+      if (content.length > 50) {
+        content = `[파일: ${note.title}]\n${content}`;
       }
 
     } else {
@@ -205,7 +203,7 @@ async function step2_generateWiki(
 
   if (isFirstTime) {
     prompt = `당신은 회사 지식 베이스를 관리하는 위키 편집자입니다.
-아래 메모들로 회사 지식 베이스 위키를 작성하세요.
+아래 메모들의 **실제 내용**을 읽고 분석하여 회사 지식 베이스 위키를 작성하세요.
 
 ━━━ 메모들 (총 ${parsedNotes.length}개) ━━━
 ${notesDetail}
@@ -215,9 +213,12 @@ ${notesDetail}
 2. 두 번째 줄: WIKI_TAGS: [태그1,태그2,태그3,...] (최대 10개)
 3. 세 번째 줄부터: 마크다운 본문
    - 상단에 **마지막 업데이트**: ${today} | **메모 수**: ${allLinkedNoteCount}개
+   - 메모 내용을 **직접 분석**하여 핵심 정보, 수치, 사실을 추출
+   - [파일: ...] 메모는 파일 안의 실제 데이터/내용을 분석하여 정리
    - ## 개요, 내용 섹션들 (3~6개), ## 키워드 인덱스
    - 각 섹션 하단: > 📎 출처: [메모 제목]
    - 최소 800자, 전문적 백과사전 스타일
+   - 파일/메모에 대한 설명이 아닌, 내용 자체를 위키 문서로 정리
 
 출력 형식:
 WIKI_TITLE: 제목
@@ -226,7 +227,7 @@ WIKI_TAGS: 태그1,태그2,태그3
   } else {
     const existingPreview = existingWiki.slice(0, 5000);
     prompt = `당신은 회사 지식 베이스를 관리하는 위키 편집자입니다.
-기존 위키에 새 메모들을 통합하여 업데이트하세요.
+기존 위키에 새 메모들의 **실제 내용**을 분석하여 통합하세요.
 
 ━━━ 기존 위키 (v${existingVersion}) ━━━
 ${existingPreview}${existingWiki.length > 5000 ? '\n... (이하 생략)' : ''}
@@ -239,9 +240,10 @@ ${notesDetail}
 2. 두 번째 줄: WIKI_TAGS: [태그1,태그2,...] (최대 10개)
 3. 세 번째 줄부터: 업데이트된 마크다운 본문
    - **마지막 업데이트**: ${today} | **메모 수**: ${allLinkedNoteCount}개 로 갱신
+   - [파일: ...] 메모는 파일 안의 실제 데이터/내용을 분석하여 관련 섹션에 통합
    - 새 내용을 기존 관련 섹션에 자연스럽게 통합 (중복 제거)
-   - 새 주제면 새 섹션 추가
-   - 기존 내용 삭제 금지, 보완만
+   - 새 주제면 새 섹션 추가, 기존 내용 삭제 금지
+   - 파일/메모에 대한 설명이 아닌, 내용 자체를 통합
 
 출력 형식:
 WIKI_TITLE: 제목
