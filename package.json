@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "deploy": "git add -A && git commit -m 'deploy' --allow-empty && git push && npx vercel deploy --token \"$VERCEL_TOKEN\" --scope \"$VERCEL_TEAM_ID\" --prod --yes"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

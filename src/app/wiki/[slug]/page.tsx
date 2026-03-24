@@ -28,8 +28,9 @@ export default async function WikiDetailPage({ params }: Props) {
 
   if (!wiki) redirect('/wiki');
 
-  // 서버에서 소유자 여부 판단 (클라이언트에서 user_id 비교 불필요)
-  const isOwner = wiki.user_id === session.user.id;
+  // .eq('user_id', session.user.id) 쿼리가 성공했다 = 본인 위키
+  // user_id 컬럼이 RLS로 인해 반환 안 될 수 있으므로 쿼리 성공 여부로 판단
+  const isOwner = true;
 
   return (
     <AppLayout>
