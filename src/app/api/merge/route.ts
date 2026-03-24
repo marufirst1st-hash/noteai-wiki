@@ -152,30 +152,36 @@ async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
       } catch { content = note.content?.replace(/<[^>]+>/g, '') || ''; }
 
     } else if (note.type === 'file') {
-      // 원본 텍스트 그대로 전달 — AI가 직접 내용을 읽고 분석
-      // content_json에는 파싱된 원본 텍스트가 저장됨
       const raw = note.content || '';
 
-      // 혹시 이전 방식(AI 분석 + 원본 코드블록)으로 저장된 메모 대응
+      // 케이스1: 새 방식 — 원본 텍스트가 그대로 저장된 경우 (코드블록 없음)
+      // 케이스2: 구 방식 — "## 파일 분석 결과" + 코드블록 안에 실제 내용
       const codeBlockMatch = raw.match(/```\n?([\s\S]*?)```/);
-      const rawDataFromBlock = codeBlockMatch?.[1]?.trim() || '';
+      const insideBlock = codeBlockMatch?.[1]?.trim() || '';
 
-      // 코드블록 안에 실제 데이터가 있으면 그걸 쓰고, 없으면 전체 content를 원본으로 간주
-      const actualContent = rawDataFromBlock.length > 100 ? rawDataFromBlock : raw;
+      let actualContent: string;
 
-      // HTML 태그 제거
-      content = actualContent.replace(/<[^>]+>/g, '').trim();
-
-      // 파일 내용임을 명시해서 AI가 맥락을 알도록
-      if (content.length > 50) {
-        content = `[파일: ${note.title}]\n${content}`;
+      if (insideBlock.length > 200) {
+        // 구 방식: 코드블록 안의 원본 데이터 사용
+        // "## 시트: Sheet1\n이름,부서..." 또는 "[페이지 1]\n내용..." 형태
+        actualContent = insideBlock;
+      } else {
+        // 새 방식 또는 원본 그대로: content 전체 사용
+        // "## 파일 분석 결과" 같은 헤더가 있으면 제거
+        actualContent = raw
+          .replace(/^## 파일 분석 결과[\s\S]*?```[\s\S]*?```/m, '')
+          .replace(/<[^>]+>/g, '')
+          .trim();
+        if (!actualContent) actualContent = raw.replace(/<[^>]+>/g, '').trim();
       }
+
+      content = actualContent.slice(0, 6000);
 
     } else {
       content = note.content?.replace(/<[^>]+>/g, '') || '';
     }
 
-    const maxLen = note.type === 'file' ? 5500 : 2000;
+    const maxLen = note.type === 'file' ? 6000 : 2000;
     results.push({
       id: note.id, title: note.title, type: note.type,
       content: content.slice(0, maxLen),
@@ -185,7 +191,7 @@ async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
   return results;
 }
 
-/** 2+3단계 통합: 엔티티 추출 + 위키 통합을 단일 Gemini 호출로 처리 */
+/** 2+3단계 통합: 위키 생성/업데이트 — 내용 정리 중심 */
 async function step2_generateWiki(
   existingWiki: string | null,
   existingVersion: number,
@@ -202,53 +208,54 @@ async function step2_generateWiki(
   let prompt: string;
 
   if (isFirstTime) {
-    prompt = `당신은 회사 지식 베이스를 관리하는 위키 편집자입니다.
-아래 메모들의 **실제 내용**을 읽고 분석하여 회사 지식 베이스 위키를 작성하세요.
+    prompt = `아래는 회사 업무 자료입니다. 이 내용을 그대로 위키 문서로 만들어주세요.
 
-━━━ 메모들 (총 ${parsedNotes.length}개) ━━━
+━━━ 자료 원문 ━━━
 ${notesDetail}
 
-━━━ 작성 지침 ━━━
-1. 첫 줄: WIKI_TITLE: [내용에 맞는 제목]
-2. 두 번째 줄: WIKI_TAGS: [태그1,태그2,태그3,...] (최대 10개)
-3. 세 번째 줄부터: 마크다운 본문
-   - 상단에 **마지막 업데이트**: ${today} | **메모 수**: ${allLinkedNoteCount}개
-   - 메모 내용을 **직접 분석**하여 핵심 정보, 수치, 사실을 추출
-   - [파일: ...] 메모는 파일 안의 실제 데이터/내용을 분석하여 정리
-   - ## 개요, 내용 섹션들 (3~6개), ## 키워드 인덱스
-   - 각 섹션 하단: > 📎 출처: [메모 제목]
-   - 최소 800자, 전문적 백과사전 스타일
-   - 파일/메모에 대한 설명이 아닌, 내용 자체를 위키 문서로 정리
+━━━ 규칙 ━━━
+- 첫 줄: WIKI_TITLE: [내용을 대표하는 제목]
+- 두 번째 줄: WIKI_TAGS: [태그1,태그2,...] (최대 10개)
+- 세 번째 줄부터: 위키 본문
 
-출력 형식:
+위키 본문 작성 방법:
+- **마지막 업데이트**: ${today} | **자료 수**: ${allLinkedNoteCount}개
+- 원문에 있는 내용을 그대로 정리 (내용 추가/해석/평가 금지)
+- Q&A 자료 → 질문/답변을 표나 항목으로 그대로 나열
+- 절차/매뉴얼 자료 → 단계별 순서대로 나열
+- 데이터/수치 자료 → 항목명과 값을 그대로 정리
+- 회의록/메모 자료 → 결정사항, 할일, 논의내용을 항목으로 나열
+- 내용을 "설명"하거나 "분석"하지 말고, 내용 자체를 문서로 구조화
+- > 📎 출처: [메모 제목] 을 섹션마다 추가
+
 WIKI_TITLE: 제목
-WIKI_TAGS: 태그1,태그2,태그3
-마크다운 본문...`;
+WIKI_TAGS: 태그1,태그2
+본문...`;
   } else {
     const existingPreview = existingWiki.slice(0, 5000);
-    prompt = `당신은 회사 지식 베이스를 관리하는 위키 편집자입니다.
-기존 위키에 새 메모들의 **실제 내용**을 분석하여 통합하세요.
+    prompt = `아래는 기존 위키와 새로 추가할 자료입니다. 새 자료의 내용을 기존 위키에 통합해주세요.
 
 ━━━ 기존 위키 (v${existingVersion}) ━━━
 ${existingPreview}${existingWiki.length > 5000 ? '\n... (이하 생략)' : ''}
 
-━━━ 새 메모들 (${parsedNotes.length}개) ━━━
+━━━ 새 자료 ━━━
 ${notesDetail}
 
-━━━ 통합 지침 ━━━
-1. 첫 줄: WIKI_TITLE: [제목 (변경 필요시만 수정)]
-2. 두 번째 줄: WIKI_TAGS: [태그1,태그2,...] (최대 10개)
-3. 세 번째 줄부터: 업데이트된 마크다운 본문
-   - **마지막 업데이트**: ${today} | **메모 수**: ${allLinkedNoteCount}개 로 갱신
-   - [파일: ...] 메모는 파일 안의 실제 데이터/내용을 분석하여 관련 섹션에 통합
-   - 새 내용을 기존 관련 섹션에 자연스럽게 통합 (중복 제거)
-   - 새 주제면 새 섹션 추가, 기존 내용 삭제 금지
-   - 파일/메모에 대한 설명이 아닌, 내용 자체를 통합
+━━━ 규칙 ━━━
+- 첫 줄: WIKI_TITLE: [제목]
+- 두 번째 줄: WIKI_TAGS: [태그1,태그2,...]
+- 세 번째 줄부터: 위키 본문
 
-출력 형식:
+통합 방법:
+- **마지막 업데이트**: ${today} | **자료 수**: ${allLinkedNoteCount}개 로 갱신
+- 새 자료의 내용을 그대로 기존 위키의 적절한 섹션에 추가
+- 같은 주제면 기존 섹션에 항목 추가, 새 주제면 새 섹션 생성
+- 기존 내용 삭제 금지, 새 내용을 그대로 붙여넣듯 통합
+- 내용을 "설명"하거나 "분석"하지 말고, 내용 자체를 문서로 구조화
+
 WIKI_TITLE: 제목
-WIKI_TAGS: 태그1,태그2,태그3
-마크다운 본문...`;
+WIKI_TAGS: 태그1,태그2
+본문...`;
   }
 
   // 단일 Gemini 호출 (구 step2 + step3 통합)
