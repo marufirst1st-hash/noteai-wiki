@@ -244,8 +244,17 @@ export function MergeModal({ noteIds, onClose }: Props) {
                   <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="font-medium mb-1">오류 발생</p>
-                    <p className="text-xs">{error}</p>
-                    <button onClick={handleMerge} className="mt-2 text-xs underline text-red-700">
+                    <p className="text-xs whitespace-pre-line">{error}</p>
+                    {error.includes('할당량') || error.includes('429') ? (
+                      <p className="text-xs text-amber-600 mt-1.5 font-medium">
+                        💡 Gemini API 무료 플랜은 분당 요청 한도가 있습니다. 잠시 후 다시 시도해주세요.
+                      </p>
+                    ) : null}
+                    <button
+                      onClick={handleMerge}
+                      disabled={isProcessing}
+                      className="mt-2 text-xs underline text-red-700 disabled:opacity-50"
+                    >
                       다시 시도
                     </button>
                   </div>

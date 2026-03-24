@@ -14,13 +14,45 @@ function sseData(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
+// ─────────────────────────────────────────
+// 429 재시도 유틸리티 (지수 백오프)
+// ─────────────────────────────────────────
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  let lastError: Error = new Error('알 수 없는 오류');
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await fetch(url, options);
+
+    if (res.status !== 429) return res; // 429가 아니면 즉시 반환
+
+    // 429 처리: Retry-After 헤더 확인 후 대기
+    const retryAfter = res.headers.get('Retry-After');
+    const waitMs = retryAfter
+      ? parseInt(retryAfter, 10) * 1000
+      : Math.min(2000 * Math.pow(2, attempt), 30000); // 2s, 4s, 8s ... 최대 30s
+
+    console.warn(`Gemini 429 (할당량 초과) - ${attempt + 1}번째 시도, ${waitMs / 1000}초 후 재시도`);
+    lastError = new Error(
+      `Gemini API 할당량을 초과했습니다. ${Math.ceil(waitMs / 1000)}초 후 재시도합니다... (${attempt + 1}/${maxRetries})`
+    );
+
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+  }
+
+  throw lastError;
+}
+
 // Gemini 텍스트 생성
 async function geminiGenerate(
   prompt: string,
   maxTokens = 8192,
   temperature = 0.4
 ): Promise<string> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${FAST_MODEL}:generateContent?key=${GEMINI_KEY()}`,
     {
       method: 'POST',
@@ -33,34 +65,30 @@ async function geminiGenerate(
   );
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Gemini 오류: ${res.status} - ${err.slice(0, 200)}`);
+    throw new Error(`Gemini 오류: ${res.status} - ${err.slice(0, 300)}`);
   }
   const data = await res.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
-// Gemini 멀티모달 (이미지 분석)
+// Gemini 멀티모달 (이미지 분석) — 이미지는 최대 2장으로 제한해 부하 감소
 async function geminiMultimodal(textPrompt: string, imageUrls: string[]): Promise<string> {
   const parts: unknown[] = [{ text: textPrompt }];
 
-  // 이미지 fetch 병렬 처리
-  const imageResults = await Promise.allSettled(
-    imageUrls.slice(0, 4).map(async (url) => {
+  // 이미지 fetch: 최대 2장, 순차 처리 (병렬 API 부하 방지)
+  for (const url of imageUrls.slice(0, 2)) {
+    try {
       const imgRes = await fetch(url);
-      if (!imgRes.ok) return null;
+      if (!imgRes.ok) continue;
       const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
       const buffer = await imgRes.arrayBuffer();
-      return { mime_type: contentType, data: Buffer.from(buffer).toString('base64') };
-    })
-  );
-
-  for (const result of imageResults) {
-    if (result.status === 'fulfilled' && result.value) {
-      parts.push({ inline_data: result.value });
+      parts.push({ inline_data: { mime_type: contentType, data: Buffer.from(buffer).toString('base64') } });
+    } catch {
+      // 이미지 로드 실패 시 무시
     }
   }
 
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${FAST_MODEL}:generateContent?key=${GEMINI_KEY()}`,
     {
       method: 'POST',
@@ -71,7 +99,10 @@ async function geminiMultimodal(textPrompt: string, imageUrls: string[]): Promis
       }),
     }
   );
-  if (!res.ok) throw new Error(`멀티모달 오류: ${res.status}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`멀티모달 오류: ${res.status} - ${err.slice(0, 200)}`);
+  }
   const data = await res.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
@@ -96,9 +127,11 @@ interface MindNode { id: string; topic?: string; children?: MindNode[]; }
 // 단계별 AI 처리 (최적화 버전)
 // ─────────────────────────────────────────
 
-/** 1단계: 새 메모들 파싱 — Promise.all로 병렬 처리 */
+/** 1단계: 새 메모들 파싱 — 이미지 메모는 순차 처리 (API 부하 감소) */
 async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
-  const tasks = notes.map(async (note): Promise<ParsedNote> => {
+  const results: ParsedNote[] = [];
+
+  for (const note of notes) {
     let content = '';
 
     if (note.type === 'mindmap') {
@@ -129,14 +162,13 @@ async function step1_parseNotes(notes: NoteData[]): Promise<ParsedNote[]> {
     }
 
     const maxLen = note.type === 'file' ? 5500 : 2000;
-    return {
+    results.push({
       id: note.id, title: note.title, type: note.type,
       content: content.slice(0, maxLen),
-    };
-  });
+    });
+  }
 
-  // 모든 메모 병렬 처리
-  return Promise.all(tasks);
+  return results;
 }
 
 /** 2+3단계 통합: 엔티티 추출 + 위키 통합을 단일 Gemini 호출로 처리 */
